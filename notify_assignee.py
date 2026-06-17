@@ -105,12 +105,13 @@ def _to_datestr(s: str) -> str:
 
 def notify_assignee(open_id: str, title: str, estimated_hours: float,
                     plan_start: str, plan_end: str, task_id: str,
-                    project_id: str = "", project_name: str = "") -> str:
+                    project_id: str = "", project_name: str = "",
+                    assignee_uid: str = "") -> str:
     """
     向指派人发送飞书私信通知，返回错误信息或空字符串（成功）。
 
     参数：
-      open_id: 指派人飞书 open_id（ou_xxx），为空时跳过通知
+      open_id: 指派人飞书 open_id（ou_xxx），为空时用 assignee_uid 发
       title: 任务名
       estimated_hours: 预估工时
       plan_start: 计划开始日期
@@ -118,8 +119,9 @@ def notify_assignee(open_id: str, title: str, estimated_hours: float,
       task_id: Trinity 任务 ID
       project_id: Trinity 项目 ID（用于生成链接）
       project_name: 项目名（用于生成链接）
+      assignee_uid: Trinity UID（=飞书 user_id），open_id 为空时回退用
     """
-    if not open_id:
+    if not open_id and not assignee_uid:
         return ""
 
     token = _get_feishu_token()
@@ -135,15 +137,19 @@ def notify_assignee(open_id: str, title: str, estimated_hours: float,
         project_id or "",
     )
 
+    # 优先 open_id，回退 user_id
+    receiver_id = open_id or assignee_uid
+    id_type = "open_id" if open_id else "user_id"
+
     try:
         resp = requests.post(
-            "https://open.feishu.cn/open-apis/im/v1/messages?receive_id_type=open_id",
+            f"https://open.feishu.cn/open-apis/im/v1/messages?receive_id_type={id_type}",
             headers={
                 "Authorization": f"Bearer {token}",
                 "Content-Type": "application/json",
             },
             json={
-                "receive_id": open_id,
+                "receive_id": receiver_id,
                 "msg_type": "interactive",
                 "content": json.dumps(card, ensure_ascii=False),
             },

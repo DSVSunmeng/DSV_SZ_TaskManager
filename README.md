@@ -1,4 +1,4 @@
-# TaskCreator v3.0 — 飞书机器人 → 妙搭 → Trinity 任务创建 → 多维表格 + 指派通知
+# TaskCreator v3.1 — 飞书机器人 → 妙搭 → Trinity 任务创建 → 多维表格 + 指派通知
 
 ## 概述
 
@@ -204,9 +204,14 @@ python feishu_ws_bot.py
 
 启动后自动连接飞书 WS 网关，心跳每 30s 打印一次。
 
-## v3.0 更新内容
+## v3.1 更新内容
 
-### v3.0（当前）
+### v3.1（当前）
+- **通知支持 user_id 回退**：没有 open_id 时直接用 Trinity UID（=飞书 user_id）发送通知，无需搜索飞书通讯录
+- **notify_assignee 优化**：新增 `assignee_uid` 参数，自动选择 `receive_id_type`
+- **简化依赖**：指派通知不依赖飞书联系人搜索，有 uid 就能发
+
+### v3.0
 - **指派通知**：新增 `notify_assignee.py`，每个任务创建后向指派人发送飞书卡片消息通知
 - **卡片消息格式**：使用 Interactive Card，含蓝色标题栏、任务/项目/工时/日期分栏、"查看详情"按钮
 - **完整回调链路**：`on_task_created` 回调统一处理多维表格写入 + 指派通知，两种互不阻塞

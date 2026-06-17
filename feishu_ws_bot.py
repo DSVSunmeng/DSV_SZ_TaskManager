@@ -276,8 +276,8 @@ def _process_one_message(text: str, chat_id: str, open_id: str):
                     except Exception as e:
                         logger.warning("多维表格写入异常: %s", e)
 
-                # 指派通知
-                if assignee_oid:
+                # 指派通知（优先 open_id，回退 uid）
+                if assignee_oid or assignee_uid:
                     try:
                         from notify_assignee import notify_assignee
                         err = notify_assignee(
@@ -286,6 +286,7 @@ def _process_one_message(text: str, chat_id: str, open_id: str):
                             task_id,
                             project_id=pid,
                             project_name=project_name,
+                            assignee_uid=assignee_uid,
                         )
                         if err:
                             logger.warning("指派通知异常: %s", err)
