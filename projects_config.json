@@ -1,0 +1,226 @@
+[
+  {
+    "name": "GAC_AH8_IPU04_单OrinX",
+    "abbr": "AH8",
+    "projectId": "PMD2024042617351857420",
+    "parentTask": "",
+    "spm": "蔡波",
+    "feishu_url": ""
+  },
+  {
+    "name": "GTMC_AY5-T_IPU04_ADC_OrinX",
+    "abbr": "AY5-T",
+    "projectId": "PMD2024060720191019789",
+    "parentTask": "TASK20240613_08808",
+    "spm": "蔡波",
+    "feishu_url": ""
+  },
+  {
+    "name": "GAC_A8R_IPU04_单OrinX",
+    "abbr": "A8R",
+    "projectId": "PMD2025031311181640944",
+    "parentTask": "",
+    "spm": "蔡波",
+    "feishu_url": ""
+  },
+  {
+    "name": "GTMC_A66-T_IPU04_ADC_OrinY",
+    "abbr": "A66-T",
+    "projectId": "PMD2024120221095107834",
+    "parentTask": "",
+    "spm": "蔡波",
+    "feishu_url": ""
+  },
+  {
+    "name": "Honda 3GA/3GE 8650 Project",
+    "abbr": "3GE",
+    "projectId": "PMD2025062410141202455",
+    "parentTask": "",
+    "spm": "杜雪莲",
+    "feishu_url": ""
+  },
+  {
+    "name": "Honda 3DAA",
+    "abbr": "3DAA",
+    "projectId": "APP2026042119304398954",
+    "parentTask": "TASK20260422_21287",
+    "spm": "杜雪莲",
+    "feishu_url": "https://yesv-desaysv.feishu.cn/base/UE0ubzRvxau17ZsiYApcV9Zoncd?table=tblImisAZ2X6K0ZU&view=vewiOuVCzv"
+  },
+  {
+    "name": "GAC A02 IPU04 单Orin",
+    "abbr": "A02",
+    "projectId": "PMD2022112210380404993",
+    "parentTask": "",
+    "spm": "房汉柠",
+    "feishu_url": ""
+  },
+  {
+    "name": "广汽 A19 单Orin IPU04",
+    "abbr": "A19",
+    "projectId": "PMD2023020722181365027",
+    "parentTask": "TASK20241119_21861",
+    "spm": "房汉柠",
+    "feishu_url": ""
+  },
+  {
+    "name": "GAC_A02Y_IPU04_ADC_OrinX",
+    "abbr": "A02Y",
+    "projectId": "PMD2024022210122841195",
+    "parentTask": "",
+    "spm": "房汉柠",
+    "feishu_url": ""
+  },
+  {
+    "name": "GAC_A19_IPU04_ADC_OrinX",
+    "abbr": "A19X",
+    "projectId": "PMD2024022311142017745",
+    "parentTask": "",
+    "spm": "房汉柠",
+    "feishu_url": ""
+  },
+  {
+    "name": "DF NISSAN PK1B_IPU04_Orin Y",
+    "abbr": "PK1B",
+    "projectId": "PMD2024120210121168624",
+    "parentTask": "",
+    "spm": "房汉柠",
+    "feishu_url": ""
+  },
+  {
+    "name": "BYD AI BOX潜在项目预研究",
+    "abbr": "BYD AI BOX",
+    "projectId": "OPP2026031109364479995",
+    "parentTask": "",
+    "spm": "房汉柠",
+    "feishu_url": ""
+  },
+  {
+    "name": "BTET BZ5 ADCU",
+    "abbr": "BZ5",
+    "projectId": "APP2025122309411137097",
+    "parentTask": "",
+    "spm": "房汉柠",
+    "feishu_url": ""
+  },
+  {
+    "name": "BEV_Step3_ADC",
+    "abbr": "BEV_Step3_ADC",
+    "projectId": "PMD2024013019344108426",
+    "parentTask": "",
+    "spm": "房汉柠",
+    "feishu_url": ""
+  },
+  {
+    "name": "BTET BZ5 预研究",
+    "abbr": "BZ5",
+    "projectId": "OPP2025120309151836674",
+    "parentTask": "",
+    "spm": "房汉柠",
+    "feishu_url": ""
+  },
+  {
+    "name": "GAC T75 VCC 智驾版_ADC",
+    "abbr": "T75",
+    "projectId": "APP2025112011470332510",
+    "parentTask": "",
+    "spm": "宋学郊",
+    "feishu_url": ""
+  },
+  {
+    "name": "DF NISSAN_LK1A_IPU04_Orin N",
+    "abbr": "LK1A",
+    "projectId": "PMD2024032711450436649",
+    "parentTask": "",
+    "spm": "宋学郊",
+    "feishu_url": ""
+  },
+  {
+    "name": "GTMC AY5-TM ADCU",
+    "abbr": "AY5-TM",
+    "projectId": "APP2026031715280267816",
+    "parentTask": "",
+    "spm": "宋学郊",
+    "feishu_url": ""
+  },
+  {
+    "name": "GAC_AY5_IPU04_单OrinX",
+    "abbr": "AY5",
+    "projectId": "PMD2024032913445922116",
+    "parentTask": "TASK20240403_04765",
+    "spm": "孙猛",
+    "feishu_url": ""
+  },
+  {
+    "name": "GAC_AY3_IPU04_ADC_单OrinX",
+    "abbr": "AY3",
+    "projectId": "PMD2024072216452174162",
+    "parentTask": "TASK20240726_17629",
+    "spm": "孙猛",
+    "feishu_url": ""
+  },
+  {
+    "name": "GAC_T68_IPU04_ADC_OrinX",
+    "abbr": "T68",
+    "projectId": "PMD2024060620130134965",
+    "parentTask": "TASK20240621_16481",
+    "spm": "孙猛",
+    "feishu_url": ""
+  },
+  {
+    "name": "GAC_T9M_IPU04_ADC_OrinX",
+    "abbr": "T9M",
+    "projectId": "PMD2025031920265349050",
+    "parentTask": "TASK20250408_07370",
+    "spm": "孙猛",
+    "feishu_url": ""
+  },
+  {
+    "name": "郑州日产S20 角毫米波雷达（2944方案）",
+    "abbr": "角雷达",
+    "projectId": "APP2026011710212336366",
+    "parentTask": "TASK20260117_29792",
+    "spm": "孙猛",
+    "feishu_url": ""
+  },
+  {
+    "name": "郑州日产S20前毫米波雷达（4D边缘计算）",
+    "abbr": "前雷达",
+    "projectId": "APP2026011710350226176",
+    "parentTask": "TASK20260117_29790",
+    "spm": "孙猛",
+    "feishu_url": ""
+  },
+  {
+    "name": "X1T ThorU/GAC_XE6_IPU14_ThorU",
+    "abbr": "XE6",
+    "projectId": "PMD2025060612224000976",
+    "parentTask": "",
+    "spm": "孙猛",
+    "feishu_url": ""
+  },
+  {
+    "name": "GAC_YE6_IPU14_ThorU",
+    "abbr": "YE6",
+    "projectId": "APP2026032710150663335",
+    "parentTask": "TASK20260420_20241",
+    "spm": "孙猛",
+    "feishu_url": ""
+  },
+  {
+    "name": "ZNA_S20_ADAS 郑州日产S20智驾",
+    "abbr": "S20 域控",
+    "projectId": "APP2026022710074832602",
+    "parentTask": "",
+    "spm": "张哲",
+    "feishu_url": ""
+  },
+  {
+    "name": "郑州日产8775 S20 舱驾一体域控预研项目",
+    "abbr": "S20 域控",
+    "projectId": "OPP2025091616590192840",
+    "parentTask": "",
+    "spm": "张哲",
+    "feishu_url": ""
+  }
+]

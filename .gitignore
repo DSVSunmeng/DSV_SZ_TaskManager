@@ -1,0 +1,31 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+
+# Runtime
+.bot_pid
+bot*.log
+
+# Cache (auto-generated)
+.member_cache.json
+cache/
+
+# Environment & IDE
+.claude/
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+Thumbs.db
+.DS_Store
+
+# Secrets (if any)
+.env
+*.key
