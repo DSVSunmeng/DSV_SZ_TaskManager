@@ -18,17 +18,17 @@
 │  ┌──────────┐   ┌──────────┐   ┌──────────────────────────────────┐    │
 │  │ WS 线程   │ → │ 消息队列  │ → │ ThreadPoolExecutor(2)            │    │
 │  │ 收消息+ACK │   │ Queue    │   │ 每条消息最多 150s 超时            │    │
-│  └──────────┘   │ + 5min TTL│   │ ① 提取项目缩写 → project_matcher  │    │
+│  └──────────┘   │ + 5min TTL│   │ ① 提取项目缩写 → trinity_project_matcher  │    │
 │                 └──────────┘   │ ② 调妙搭拆解任务                    │    │
 │                                │ ③ process_miaoda_tasks 创建任务     │    │
 │                                │ ④ on_task_created 回调              │    │
-│                                │    ├─ bitable_writer  → 多维表格    │    │
-│                                │    └─ notify_assignee → 指派通知    │    │
+│                                │    ├─ feishu_bitable_writer  → 多维表格    │    │
+│                                │    └─ feishu_notify_assignee → 指派通知    │    │
 │                                └──────────────────────────────────┘    │
 └────────────────────────────────────────────────────────────────────────┘
                                            │
               ┌────────────────────────────┼───────────────┐
-              │       miaoda_task_handler.py                │
+              │       trinity_miaoda_task_handler.py                │
               │  ┌──────────┐  ┌──────────┐  ┌──────────┐ │
               │  │ NAME_MAP │  │ 拼音转写  │  │ Trinity  │ │
               │  │ 手动覆盖  │→ │ 自动匹配  │→ │ API 创建 │ │
@@ -45,7 +45,7 @@
               └────────────────────────────────────────────┘
                                            ▲
               ┌────────────────────────────┴───────────────┐
-              │            project_matcher.py               │
+              │            trinity_project_matcher.py               │
               │  projects_config.json → 模糊匹配 → 项目配置  │
               │  "A66T" → "您是否指 A66-T？"                 │
               │  "3DAA" → 精确匹配 → 项目ID / parentTask    │
@@ -57,14 +57,14 @@
 | 文件 | 职责 |
 |------|------|
 | `feishu_ws_bot.py` | 飞书 WS 长连接、消息收发、@提及替换、项目缩写提取、任务创建调度、位表写入回调 |
-| `miaoda_task_handler.py` | 任务创建核心逻辑：人名/ID解析、飞书联系人搜索、Trinity API 调用、生成任务链接 |
-| `bitable_writer.py` | 飞书多维表格写入：将已创建的 Trinity 任务写入项目对应 Bitable |
-| `notify_assignee.py` | 指派通知：任务创建后向指派人发送飞书私信通知 |
-| `project_matcher.py` | 项目缩写精确匹配 + 模糊搜索 + 用户引导 |
-| `projects_config.json` | 项目配置（缩写→项目ID→SPM→父级任务→feishu_url） |
+| `trinity_miaoda_task_handler.py` | 任务创建核心逻辑：人名/ID解析、飞书联系人搜索、Trinity API 调用、生成任务链接 |
+| `feishu_bitable_writer.py` | 飞书多维表格写入：将已创建的 Trinity 任务写入项目对应 Bitable |
+| `feishu_notify_assignee.py` | 指派通知：任务创建后向指派人发送飞书私信通知 |
+| `trinity_project_matcher.py` | 项目缩写精确匹配 + 模糊搜索 + 用户引导 |
+| `config/projects_config.json` | 项目配置（缩写→项目ID→SPM→父级任务→feishu_url） |
+| `config/name_map.json` | 中文名 → 英文名映射（可选，拼音可自动匹配） |
+| `config/member_cache.json` | Trinity 项目成员缓存（自动维护） |
 | `config.py` | Trinity 认证配置、Token 管理 |
-| `.name_map.json` | 中文名 → 英文名映射（可选，拼音可自动匹配） |
-| `.member_cache.json` | Trinity 项目成员缓存（自动维护） |
 
 ## 使用方式
 
@@ -193,7 +193,7 @@ A19白盒测试 指派人: 房汉柠 | 20h
 - **工时** + **计划日期**（左右分栏）
 - **查看详情按钮**：点击跳转 Trinity 任务页（含 projectId / projectName 参数）
 
-通过在 `feishu_ws_bot.py` 的 `on_task_created` 回调中调用 `notify_assignee.notify_assignee()` 实现。
+通过在 `feishu_ws_bot.py` 的 `on_task_created` 回调中调用 `feishu_notify_assignee.feishu_notify_assignee()` 实现。
 
 ## 运行
 
@@ -222,17 +222,17 @@ python feishu_ws_bot.py
 
 ### v3.1
 - **通知支持 user_id 回退**：没有 open_id 时直接用 Trinity UID（=飞书 user_id）发送通知，无需搜索飞书通讯录
-- **notify_assignee 优化**：新增 `assignee_uid` 参数，自动选择 `receive_id_type`
+- **feishu_notify_assignee 优化**：新增 `assignee_uid` 参数，自动选择 `receive_id_type`
 - **简化依赖**：指派通知不依赖飞书联系人搜索，有 uid 就能发
 
 ### v3.0
-- **指派通知**：新增 `notify_assignee.py`，每个任务创建后向指派人发送飞书卡片消息通知
+- **指派通知**：新增 `feishu_notify_assignee.py`，每个任务创建后向指派人发送飞书卡片消息通知
 - **卡片消息格式**：使用 Interactive Card，含蓝色标题栏、任务/项目/工时/日期分栏、"查看详情"按钮
 - **完整回调链路**：`on_task_created` 回调统一处理多维表格写入 + 指派通知，两种互不阻塞
 - **文档架构图更新**：反映完整流程（WS → 队列 → 任务创建 → 位表写入 + 通知）
 
 ### v2.3
-- **多维表格写入**：新增 `bitable_writer.py`，任务创建成功后自动写入项目对应飞书多维表格
+- **多维表格写入**：新增 `feishu_bitable_writer.py`，任务创建成功后自动写入项目对应飞书多维表格
 - **字段名修正**：Bitable 字段名带 `*` 前缀（`*Title`, `*InitialEstimate(h)` 等），日期字段发毫秒时间戳
 - **人员字段修复**：Bitable User 字段使用 `{"id": "ou_xxx"}` 格式，中文名指派人自动搜索飞书通讯录获取 open_id
 - **TaskID 链接修正**：URL 类型字段带 `projectId` / `projectName` 参数，确保链接触达 Trinity

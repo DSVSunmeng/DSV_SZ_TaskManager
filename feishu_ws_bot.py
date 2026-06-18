@@ -251,7 +251,7 @@ def _resolve_project(text: str) -> tuple:
       1. 遍历已知缩写（按长度降序），检查消息是否以该缩写开头
       2. 若没有精确匹配，用第一个空格分词去模糊匹配
     """
-    from project_matcher import find_project, load_projects
+    from trinity_project_matcher import find_project, load_projects
 
     text = text.strip()
     if not text:
@@ -266,7 +266,7 @@ def _resolve_project(text: str) -> tuple:
             rest = text[len(abbr):]
             # 后面紧跟非字母数字（中文、空格、标点）或结尾 → 确认匹配
             if not rest or not rest[0].isascii() or not rest[0].isalnum():
-                from project_matcher import find_project
+                from trinity_project_matcher import find_project
                 result = find_project(abbr)
                 if result["found"]:
                     cleaned = rest.strip()
@@ -341,7 +341,7 @@ def _process_one_message(text: str, chat_id: str, open_id: str):
                 # 多维表格写入（如有配置）
                 if feishu_url:
                     try:
-                        from bitable_writer import write_task_to_bitable
+                        from feishu_bitable_writer import write_task_to_bitable
                         err = write_task_to_bitable(
                             feishu_url, title, hours,
                             start_date, end_date,
@@ -358,7 +358,7 @@ def _process_one_message(text: str, chat_id: str, open_id: str):
                 # 指派通知（优先 open_id，回退 uid）
                 if assignee_oid or assignee_uid:
                     try:
-                        from notify_assignee import notify_assignee
+                        from feishu_notify_assignee import notify_assignee
                         err = notify_assignee(
                             assignee_oid, title, hours,
                             start_date, end_date,
@@ -373,7 +373,7 @@ def _process_one_message(text: str, chat_id: str, open_id: str):
                         logger.warning("指派通知异常: %s", e)
 
             try:
-                from miaoda_task_handler import process_miaoda_tasks
+                from trinity_miaoda_task_handler import process_miaoda_tasks
                 result = process_miaoda_tasks(
                     tasks,
                     project_id=pid,

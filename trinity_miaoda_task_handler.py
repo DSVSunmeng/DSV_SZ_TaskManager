@@ -2,12 +2,12 @@
 妙搭任务处理器 — 解析妙搭返回的任务列表，创建 Trinity 任务
 
 用法（被 feishu_ws_bot.py 调用）：
-  from miaoda_task_handler import process_miaoda_tasks
+  from trinity_miaoda_task_handler import process_miaoda_tasks
   result = process_miaoda_tasks(tasks, project_id, creator_name, parent_task)
 
 缓存说明：
-  - .name_map.json: 中文名 → 英文名映射（用户维护）
-  - .member_cache.json: 英文名 → UID 缓存（从 Trinity 自动获取）
+  - config/name_map.json: 中文名 → 英文名映射（用户维护）
+  - config/member_cache.json: 英文名 → UID 缓存（从 Trinity 自动获取）
 """
 import os
 import json
@@ -23,8 +23,8 @@ logger = logging.getLogger(__name__)
 
 # ========== 配置 ==========
 CONFIG_DIR = os.path.dirname(os.path.abspath(__file__))
-NAME_MAP_FILE = os.path.join(CONFIG_DIR, ".name_map.json")
-MEMBER_CACHE_FILE = os.path.join(CONFIG_DIR, ".member_cache.json")
+NAME_MAP_FILE = os.path.join(CONFIG_DIR, "config", "name_map.json")
+MEMBER_CACHE_FILE = os.path.join(CONFIG_DIR, "config", "member_cache.json")
 
 _DEFAULT_NAME_MAP = {
     "孙猛": "Sun Meng",

@@ -12,7 +12,7 @@ bot*.log
 logs/
 
 # Cache (auto-generated)
-.member_cache.json
+config/member_cache.json
 cache/
 
 # Environment & IDE

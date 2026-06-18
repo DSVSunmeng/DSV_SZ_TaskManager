@@ -2,7 +2,7 @@
 飞书指派通知 — 任务创建后向指派人发送飞书私信通知。
 
 用法（被 feishu_ws_bot.py 调用）：
-  from notify_assignee import notify_assignee
+  from feishu_notify_assignee import notify_assignee
   notify_assignee("ou_xxx", "任务名", 40.0, "2026/06/20", "2026/06/25", "TASK2026...", "PMD...", "项目名")
 """
 import json

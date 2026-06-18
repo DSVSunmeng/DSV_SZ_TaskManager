@@ -2,7 +2,7 @@
 飞书多维表格写入器 — 将已创建的 Trinity 任务写入项目对应多维表格。
 
 用法：
-  from bitable_writer import write_task_to_bitable
+  from feishu_bitable_writer import write_task_to_bitable
   err = write_task_to_bitable(feishu_url, "任务名", 40.0, "2026/06/20", "2026/06/25", "ou_xxx", "TASK2026...", "uid02619")
 """
 import json

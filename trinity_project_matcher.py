@@ -1,8 +1,8 @@
 """
-项目配置匹配器 — 从 projects_config.json 加载项目列表，支持缩写模糊搜索。
+项目配置匹配器 — 从 config/projects_config.json 加载项目列表，支持缩写模糊搜索。
 
 用法：
-  from project_matcher import find_project
+  from trinity_project_matcher import find_project
   result = find_project("A66T")
   # → {"exact": None, "suggestions": [{"name": "...", "abbr": "A66-T", ...}], "text": "您输入的 'A66T' 未找到，是否指 'A66-T'？"}
 """
@@ -14,7 +14,7 @@ import logging
 logger = logging.getLogger(__name__)
 
 CONFIG_DIR = os.path.dirname(os.path.abspath(__file__))
-CONFIG_FILE = os.path.join(CONFIG_DIR, "projects_config.json")
+CONFIG_FILE = os.path.join(CONFIG_DIR, "config", "projects_config.json")
 
 _projects = []
 _projects_mtime = 0.0
