@@ -525,6 +525,21 @@ def process_miaoda_tasks(tasks: list, project_id: str, creator_name: str,
             fail_count += 1
             continue
 
+        # 日期兜底：妙搭没解析出日期时设为当日
+        date_warnings = []
+        today_str = datetime.now().strftime("%Y/%m/%d")
+        today_ts = int(datetime.now().timestamp() * 1000)
+        if not start_date:
+            start_date = today_str
+            start_ts = today_ts
+            date_warnings.append("开始时间")
+        if not end_date:
+            end_date = today_str
+            end_ts = today_ts
+            date_warnings.append("结束时间")
+        if date_warnings:
+            lines.append(f"{i}. 「{title}」⚠️ {'、'.join(date_warnings)}未填写，已默认设为当日")
+
         params = {
             "title": title,
             "description": title,
