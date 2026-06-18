@@ -40,6 +40,7 @@ MEMBER_CACHE_TTL = 3600  # 缓存有效期 1 小时
 
 # 运行时缓存
 _name_map = {}
+_name_map_mtime = 0.0
 _member_cache: dict = {}
 _member_cache_time = 0.0
 
@@ -47,22 +48,28 @@ _member_cache_time = 0.0
 # ========== NAME_MAP 管理 ==========
 
 def load_name_map():
-    global _name_map
+    """加载 .name_map.json（带文件 mtime 热重载）"""
+    global _name_map, _name_map_mtime
     if os.path.exists(NAME_MAP_FILE):
         try:
+            mtime = os.path.getmtime(NAME_MAP_FILE)
+            if _name_map and mtime <= _name_map_mtime:
+                return
             with open(NAME_MAP_FILE, "r", encoding="utf-8") as f:
                 _name_map = json.load(f)
+            _name_map_mtime = mtime
             logger.info("NAME_MAP 已加载: %d 条", len(_name_map))
             return
         except Exception as e:
             logger.warning("读取 NAME_MAP 文件失败: %s", e)
-    _name_map = dict(_DEFAULT_NAME_MAP)
-    try:
-        with open(NAME_MAP_FILE, "w", encoding="utf-8") as f:
-            json.dump(_name_map, f, ensure_ascii=False, indent=2)
-        logger.info("NAME_MAP 默认文件已创建: %s", NAME_MAP_FILE)
-    except Exception as e:
-        logger.warning("写入 NAME_MAP 文件失败: %s", e)
+    if not _name_map:
+        _name_map = dict(_DEFAULT_NAME_MAP)
+        try:
+            with open(NAME_MAP_FILE, "w", encoding="utf-8") as f:
+                json.dump(_name_map, f, ensure_ascii=False, indent=2)
+            logger.info("NAME_MAP 默认文件已创建: %s", NAME_MAP_FILE)
+        except Exception as e:
+            logger.warning("写入 NAME_MAP 文件失败: %s", e)
 
 
 # ========== 成员缓存管理 ==========
@@ -586,7 +593,7 @@ def process_miaoda_tasks(tasks: list, project_id: str, creator_name: str,
         if i < len(tasks):
             time.sleep(1.5)
 
-    summary = f"任务创建完成：成功 {success_count}，失败 {fail_count}\n\n"
+    summary = f"**任务创建完成：成功 {success_count}，失败 {fail_count}**\n\n"
     summary += "\n".join(lines)
     if parent_task:
         summary += f"\n\n上级任务: {parent_task}"

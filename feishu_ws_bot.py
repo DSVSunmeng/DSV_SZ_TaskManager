@@ -172,12 +172,72 @@ def reply_feishu(chat_id: str, text: str):
         logger.exception("回复飞书消息异常: %s", e)
 
 
+import re as _re
+
+
+def _text_to_post_content(text: str) -> list:
+    """将带 **bold** 标记的文本转为飞书 post 格式内容数组"""
+    lines = text.split("\n")
+    content = []
+    for line in lines:
+        elements = []
+        parts = _re.split(r'(\*\*.*?\*\*)', line)
+        for part in parts:
+            if part.startswith('**') and part.endswith('**'):
+                elements.append({"tag": "text", "text": part[2:-2], "style": ["bold"]})
+            else:
+                elements.append({"tag": "text", "text": part})
+        content.append(elements)
+    return content
+
+
+def reply_feishu_post(chat_id: str, text: str):
+    """以富文本消息（msg_type: post）发送，支持 **bold** 标记"""
+    try:
+        token = get_token()
+        content = _text_to_post_content(text)
+        resp = _insecure_session.post(
+            "https://open.feishu.cn/open-apis/im/v1/messages?receive_id_type=chat_id",
+            headers={"Authorization": f"Bearer {token}"},
+            json={
+                "receive_id": chat_id,
+                "msg_type": "post",
+                "content": json.dumps({"zh_cn": {"content": content}}, ensure_ascii=False),
+            },
+            timeout=15,
+        )
+        result = resp.json()
+        if result.get("code") != 0:
+            logger.error("回复富文本失败: %s", json.dumps(result, ensure_ascii=False))
+        else:
+            logger.info("回复富文本成功: %s...", text[:50])
+    except Exception as e:
+        logger.exception("回复飞书富文本异常: %s", e)
+
+
 # ========== 消息队列（WS 线程收 -> worker 按序处理）==========
 _message_queue: queue.Queue = queue.Queue()
 _stop_worker = threading.Event()
 MESSAGE_TTL = 300      # 消息队列最大等待时间（秒），超时丢弃
 MESSAGE_TIMEOUT = 150  # 单条消息最大处理时间（秒），超时跳过
 _worker_executor = None  # ThreadPoolExecutor，在 main 中初始化
+
+# 格式引导（项目未匹配 / 妙搭无结果时提示用户）
+_FORMAT_GUIDE = (
+    "**━━━━━━━━请以如下格式给我发送消息🔈━━━━━━━━**\n"
+    "**项目缩写**\n"
+    "**任务描述** | **指派人:** **姓名/@姓名** | **工时** | **时间**\n\n"
+    "**举例如下：**\n"
+    "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+    "YE6\n"
+    "矩阵更新5----房汉柠 5D 6/23提交\n"
+    "白盒测试5----@蔡波  5D 6/20---6/25\n"
+    "AVM适配5    @孙猛  5D 6/24完成\n"
+    "RSPA横展5    杜雪莲 2天 下周五\n"
+    "哨兵横展5    @房汉柠  16h 6/20~6/25\n"
+    "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+    "**❗项目缩写必须准确，其他没有严格格式与顺序要求，支持模糊匹配**"
+)
 
 
 def _resolve_project(text: str) -> tuple:
@@ -239,7 +299,7 @@ def _process_one_message(text: str, chat_id: str, open_id: str):
     # 解析项目缩写
     miaoda_text, project_cfg, hint = _resolve_project(text)
     if hint and not project_cfg:
-        reply_feishu(chat_id, hint)
+        reply_feishu_post(chat_id, f"{hint}\n\n{_FORMAT_GUIDE}")
         return
 
     # SPM 权限校验：只有项目配置中的 SPM 才能创建任务
@@ -323,12 +383,15 @@ def _process_one_message(text: str, chat_id: str, open_id: str):
                     on_task_created=on_created,
                 )
                 full_reply = f"项目: {project_name}\n{reply}\n\n---\n{result}"
+                if "失败 0" not in result and "失败" in result:
+                    reply_feishu_post(chat_id, f"{full_reply}\n\n{_FORMAT_GUIDE}")
+                else:
+                    reply_feishu_post(chat_id, full_reply)
             except Exception as e:
                 logger.exception("任务创建异常: %s", e)
-                full_reply = f"项目: {project_name}\n{reply}\n\n---\n任务创建异常: {e}"
-            reply_feishu(chat_id, full_reply)
+                reply_feishu_post(chat_id, f"项目: {project_name}\n{reply}\n\n---\n任务创建异常: {e}\n\n{_FORMAT_GUIDE}")
     else:
-        reply_feishu(chat_id, reply)
+        reply_feishu_post(chat_id, f"{reply}\n\n{_FORMAT_GUIDE}")
 
 
 def queue_worker():

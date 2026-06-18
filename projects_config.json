@@ -3,7 +3,7 @@
     "name": "GAC_AH8_IPU04_单OrinX",
     "abbr": "AH8",
     "projectId": "PMD2024042617351857420",
-    "parentTask": "",
+    "parentTask": "TASK20240910_12424",
     "spm": "蔡波",
     "feishu_url": ""
   },
@@ -19,7 +19,7 @@
     "name": "GAC_A8R_IPU04_单OrinX",
     "abbr": "A8R",
     "projectId": "PMD2025031311181640944",
-    "parentTask": "",
+    "parentTask": "TASK20250327_36699",
     "spm": "蔡波",
     "feishu_url": ""
   },
@@ -27,7 +27,7 @@
     "name": "GTMC_A66-T_IPU04_ADC_OrinY",
     "abbr": "A66-T",
     "projectId": "PMD2024120221095107834",
-    "parentTask": "",
+    "parentTask": "TASK20241219_24321",
     "spm": "蔡波",
     "feishu_url": ""
   },
@@ -123,9 +123,9 @@
     "name": "GAC T75 VCC 智驾版_ADC",
     "abbr": "T75",
     "projectId": "APP2025112011470332510",
-    "parentTask": "",
+    "parentTask": "TASK20251124_23976",
     "spm": "宋学郊",
-    "feishu_url": ""
+    "feishu_url": "https://yesv-desaysv.feishu.cn/base/ABAAbZelJaJG9rsUgP0cyF35nvg?table=tblfDZL3D63c4aHo&view=vewM4XrUii"
   },
   {
     "name": "DF NISSAN_LK1A_IPU04_Orin N",

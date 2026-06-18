@@ -17,20 +17,24 @@ CONFIG_DIR = os.path.dirname(os.path.abspath(__file__))
 CONFIG_FILE = os.path.join(CONFIG_DIR, "projects_config.json")
 
 _projects = []
+_projects_mtime = 0.0
 
 
 def load_projects() -> list:
-    """加载 projects_config.json，返回项目列表"""
-    global _projects
-    if _projects:
-        return _projects
+    """加载 projects_config.json，返回项目列表（带文件 mtime 热重载）"""
+    global _projects, _projects_mtime
     try:
+        mtime = os.path.getmtime(CONFIG_FILE)
+        if _projects and mtime <= _projects_mtime:
+            return _projects
         with open(CONFIG_FILE, "r", encoding="utf-8") as f:
             _projects = json.load(f)
+        _projects_mtime = mtime
         logger.info("项目配置已加载: %d 个项目", len(_projects))
     except Exception as e:
         logger.error("加载项目配置失败: %s", e)
-        _projects = []
+        if not _projects:
+            _projects = []
     return _projects
 
 
@@ -93,34 +97,47 @@ def find_project(query: str) -> dict:
             return {"found": None, "suggestions": matches,
                     "text": f"缩写「{query}」匹配到多个项目，请指定完整缩写：\n{names}"}
 
-    # 3. 模糊匹配：找包含关系的
-    suggestions = []
+    # 3. 模糊匹配：分两档
+    #   强匹配：包含关系（用户输入在缩写中，或缩写包含用户输入）
+    #   弱匹配：仅首字母相同
+    strong = []
+    weak = []
     for p in projects:
         p_norm = _normalize(p["abbr"])
-        # 用户的输入包含在缩写中，或缩写包含在用户输入中
         if norm_query in p_norm or p_norm in norm_query:
-            suggestions.append(p)
-        # 首字母/首字匹配
+            strong.append(p)
         elif query[0].lower() == p["abbr"][0].lower():
-            suggestions.append(p)
+            weak.append(p)
 
-    # 去重
+    # 强匹配去重
     seen = set()
-    unique_suggestions = []
-    for p in suggestions:
+    unique_strong = []
+    for p in strong:
         if p["projectId"] not in seen:
             seen.add(p["projectId"])
-            unique_suggestions.append(p)
+            unique_strong.append(p)
 
-    if unique_suggestions:
-        # 如果只有一个建议，直接使用
-        if len(unique_suggestions) == 1:
-            p = unique_suggestions[0]
-            return {"found": p, "suggestions": [],
-                    "text": f"您输入的是「{p['abbr']}」吗？({p['name']})"}
+    # 唯一强匹配 → 自动确认（如 "AY5" → "AY5-T"）
+    if len(unique_strong) == 1:
+        p = unique_strong[0]
+        return {"found": p, "suggestions": [],
+                "text": f"已匹配项目: {p['name']} (缩写: {p['abbr']})"}
+    if len(unique_strong) > 1:
+        names = "\n".join(f"  · {m['abbr']} — {m['name']}" for m in unique_strong)
+        return {"found": None, "suggestions": unique_strong,
+                "text": f"未找到「{query}」，您是否想找：\n{names}"}
 
-        names = "\n".join(f"  · {m['abbr']} — {m['name']}" for m in unique_suggestions)
-        return {"found": None, "suggestions": unique_suggestions,
+    # 无强匹配 → 列出弱匹配（首字母）作为候选，但不自动确认
+    seen = set()
+    unique_weak = []
+    for p in weak:
+        if p["projectId"] not in seen:
+            seen.add(p["projectId"])
+            unique_weak.append(p)
+
+    if unique_weak:
+        names = "\n".join(f"  · {m['abbr']} — {m['name']}" for m in unique_weak)
+        return {"found": None, "suggestions": unique_weak,
                 "text": f"未找到「{query}」，您是否想找：\n{names}"}
 
     # 4. 完全没找到
