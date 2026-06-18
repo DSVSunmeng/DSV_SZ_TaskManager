@@ -13,6 +13,7 @@ logs/
 
 # Cache (auto-generated)
 config/member_cache.json
+.member_cache.json
 cache/
 
 # Environment & IDE
