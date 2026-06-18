@@ -25,12 +25,17 @@ import urllib3
 urllib3.disable_warnings()
 from requests.adapters import HTTPAdapter
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s %(levelname)s %(message)s",
-    stream=sys.stdout,
-    force=True,
-)
+LOG_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "logs")
+os.makedirs(LOG_DIR, exist_ok=True)
+
+_log_file = os.path.join(LOG_DIR, "bot.log")
+_file_handler = logging.FileHandler(_log_file, encoding="utf-8")
+_file_handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
+
+_stream_handler = logging.StreamHandler(sys.stdout)
+_stream_handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
+
+logging.basicConfig(level=logging.INFO, handlers=[_file_handler, _stream_handler], force=True)
 logger = logging.getLogger(__name__)
 
 APP_ID = "cli_a9451285c0b81bc9"
@@ -237,6 +242,20 @@ def _process_one_message(text: str, chat_id: str, open_id: str):
         reply_feishu(chat_id, hint)
         return
 
+    # SPM 权限校验：只有项目配置中的 SPM 才能创建任务
+    if project_cfg:
+        spm_name = (project_cfg.get("spm") or "").strip()
+        if spm_name:
+            sender_name = get_user_name(open_id).strip()
+            # 跳过：获取姓名失败时的 fallback（usr_xxx / unknown），不误拦
+            if sender_name.startswith("usr_") or sender_name == "unknown":
+                logger.info("SPM 校验跳过（无法获取发送者姓名）: open_id=%s", open_id)
+            elif sender_name != spm_name:
+                logger.info("SPM 校验不通过: sender=%s spm=%s project=%s",
+                            sender_name, spm_name, project_cfg.get("abbr", ""))
+                reply_feishu(chat_id, f"只有项目负责人（{spm_name}）才能创建任务，你不是该项目的负责人。")
+                return
+
     reply, tasks = call_miaoda(miaoda_text, open_id)
     logger.info("妙搭回复: %s... tasks=%s", reply[:80], json.dumps(tasks, ensure_ascii=False)[:300])
 
@@ -358,6 +377,7 @@ def handle_message(data) -> None:
         open_id = sender_id.open_id or sender_id.user_id or ""
 
         content = event.message.content or "{}"
+        logger.info("原始消息内容: %s", content[:300])
         try:
             content_json = json.loads(content)
             user_text = content_json.get("text", "")

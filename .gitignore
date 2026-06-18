@@ -9,6 +9,7 @@ build/
 # Runtime
 .bot_pid
 bot*.log
+logs/
 
 # Cache (auto-generated)
 .member_cache.json
