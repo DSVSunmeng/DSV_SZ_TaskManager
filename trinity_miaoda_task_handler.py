@@ -205,6 +205,34 @@ def _resolve_feishu_id(feishu_id: str) -> tuple:
         return None, None
 
 
+def _uid_to_open_id(trinity_uid: str) -> str:
+    """
+    通过 Trinity UID（=飞书 user_id）查询对应的飞书 open_id。
+    返回 ou_xxx 格式，失败返回空字符串。
+    """
+    if not trinity_uid or not trinity_uid.startswith("uid"):
+        return ""
+    token = _get_feishu_token()
+    if not token:
+        return ""
+    try:
+        resp = requests.get(
+            f"https://open.feishu.cn/open-apis/contact/v3/users/{trinity_uid}",
+            headers={"Authorization": f"Bearer {token}"},
+            timeout=10,
+        )
+        data = resp.json()
+        if data.get("code") == 0:
+            oid = data.get("data", {}).get("user", {}).get("open_id", "")
+            if oid:
+                logger.info("UID→open_id 查询成功: %s -> %s", trinity_uid, oid)
+                return oid
+        logger.warning("UID→open_id 查询失败: uid=%s code=%s", trinity_uid, data.get("code"))
+    except Exception as e:
+        logger.exception("UID→open_id 查询异常: uid=%s err=%s", trinity_uid, e)
+    return ""
+
+
 # 姓名 → open_id 缓存
 _name_to_openid_cache: dict = {}
 _name_to_openid_cache_time = 0.0
@@ -342,7 +370,7 @@ def _resolve_by_name(chinese_name: str, project_id: str) -> tuple:
     return None, None, None
 
 
-def resolve_name_to_uid(name_or_id: str, project_id: str) -> tuple:
+def resolve_name_to_uid(name_or_id: str, project_id: str, mention_map: dict = None) -> tuple:
     """
     解析指派人 → (UID, 英文名, 飞书 open_id)
 
@@ -405,8 +433,17 @@ def resolve_name_to_uid(name_or_id: str, project_id: str) -> tuple:
     # ---- 中文名路径 ----
     uid, eng, _ = _resolve_by_name(raw, project_id)
     if uid:
+        # 优先使用 mention_map 中的 open_id（来自用户 @提及，无需再搜索）
+        if mention_map and raw in mention_map:
+            oid = mention_map[raw]
+            logger.info("mention_map 命中: name=%s oid=%s", raw, oid)
+            return uid, eng, oid
         # 尝试搜索飞书联系人获取 open_id（给位表写入用）
         oid = _find_open_id_by_name(raw)
+        if oid:
+            return uid, eng, oid
+        # 搜不到中文名时，用 Trinity UID（=飞书 user_id）直查 open_id
+        oid = _uid_to_open_id(uid)
         if oid:
             return uid, eng, oid
     return uid, eng, None
@@ -478,7 +515,7 @@ def create_trinity_task(params: dict) -> dict:
 
 def process_miaoda_tasks(tasks: list, project_id: str, creator_name: str,
                          parent_task: str = "", project_name: str = "",
-                         on_task_created=None) -> str:
+                         on_task_created=None, mention_map: dict = None) -> str:
     """
     处理妙搭返回的任务列表，逐个创建 Trinity 任务。
     返回格式化的结果文本用于飞书回复。
@@ -502,7 +539,7 @@ def process_miaoda_tasks(tasks: list, project_id: str, creator_name: str,
     success_count = 0
     fail_count = 0
 
-    creator_uid, creator_english, _ = resolve_name_to_uid(creator_name, project_id)
+    creator_uid, creator_english, _ = resolve_name_to_uid(creator_name, project_id, mention_map)
     if not creator_uid:
         logger.error("无法解析创建人 %s 的 UID，使用指派人作为创建人", creator_name)
 
@@ -518,7 +555,7 @@ def process_miaoda_tasks(tasks: list, project_id: str, creator_name: str,
             fail_count += 1
             continue
 
-        assignee_uid, assignee_en, assignee_oid = resolve_name_to_uid(assignee_cn, project_id)
+        assignee_uid, assignee_en, assignee_oid = resolve_name_to_uid(assignee_cn, project_id, mention_map)
         if not assignee_uid:
             lines.append(f"{i}. 「{title}」无法解析负责人「{assignee_cn}」的 UID（项目中未找到该成员）")
             fail_count += 1

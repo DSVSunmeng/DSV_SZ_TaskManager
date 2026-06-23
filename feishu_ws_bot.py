@@ -17,8 +17,10 @@ import signal
 import logging
 import threading
 import queue
+import hashlib
 from typing import Optional
 from threading import Lock
+from datetime import datetime
 
 import requests
 import urllib3
@@ -28,15 +30,59 @@ from requests.adapters import HTTPAdapter
 LOG_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "logs")
 os.makedirs(LOG_DIR, exist_ok=True)
 
+# 主业务日志
 _log_file = os.path.join(LOG_DIR, "bot.log")
 _file_handler = logging.FileHandler(_log_file, encoding="utf-8")
 _file_handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
+
+# 心跳专用日志
+_hb_file = os.path.join(LOG_DIR, "heartbeat.log")
+_hb_handler = logging.FileHandler(_hb_file, encoding="utf-8")
+_hb_handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
 
 _stream_handler = logging.StreamHandler(sys.stdout)
 _stream_handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
 
 logging.basicConfig(level=logging.INFO, handlers=[_file_handler, _stream_handler], force=True)
 logger = logging.getLogger(__name__)
+
+_hb_logger = logging.getLogger("heartbeat")
+_hb_logger.setLevel(logging.INFO)
+_hb_logger.addHandler(_hb_handler)
+_hb_logger.addHandler(_stream_handler)
+_hb_logger.propagate = False  # 不传到 root，避免重复
+
+# 任务累计计数器日志（独立文件）
+_task_log_file = os.path.join(LOG_DIR, "task_counter.log")
+_task_handler = logging.FileHandler(_task_log_file, encoding="utf-8")
+_task_handler.setFormatter(logging.Formatter("%(asctime)s %(message)s"))
+_task_logger = logging.getLogger("task_counter")
+_task_logger.setLevel(logging.INFO)
+_task_logger.addHandler(_task_handler)
+_task_logger.propagate = False
+
+# 任务累计计数器文件
+TASK_COUNTER_FILE = os.path.join(os.path.join(os.path.dirname(os.path.abspath(__file__)), "config"), "task_counter.json")
+_task_total = 0
+
+def _load_task_counter() -> int:
+    """从文件加载累计任务数"""
+    try:
+        if os.path.exists(TASK_COUNTER_FILE):
+            with open(TASK_COUNTER_FILE, "r", encoding="utf-8") as f:
+                return json.load(f).get("total", 0)
+    except Exception as e:
+        logger.warning("读取任务计数器失败: %s", e)
+    return 0
+
+def _save_task_counter(total: int):
+    """持久化累计任务数"""
+    try:
+        os.makedirs(os.path.dirname(TASK_COUNTER_FILE), exist_ok=True)
+        with open(TASK_COUNTER_FILE, "w", encoding="utf-8") as f:
+            json.dump({"total": total}, f)
+    except Exception as e:
+        logger.warning("写入任务计数器失败: %s", e)
 
 APP_ID = "cli_a9451285c0b81bc9"
 APP_SECRET = "eDgs2IhuO9IW9N7gmU9bBgFF6acx12aN"
@@ -129,6 +175,13 @@ def get_user_name(open_id: str) -> str:
 
 def call_miaoda(message: str, sender_id: str) -> tuple:
     """返回 (reply_text, tasks_list)"""
+    import re
+    original = message
+    # 归一化空格，避免多余空格干扰妙搭 NLP 解析
+    message = re.sub(r'\s+', ' ', message).strip()
+    # 去掉残留的 @ 符号（@中文 会干扰妙搭 NLP 解析）
+    message = re.sub(r'@(\S+)', r'\1', message)
+    logger.info("调用妙搭: message=%s sender=%s", message[:200], sender_id[:20])
     try:
         resp = _insecure_session.post(
             f"{MIAODA_BASE}/openapi/chat",
@@ -208,11 +261,11 @@ def reply_feishu_post(chat_id: str, text: str):
         )
         result = resp.json()
         if result.get("code") != 0:
-            logger.error("回复富文本失败: %s", json.dumps(result, ensure_ascii=False))
+            logger.error("回复文本失败: %s", json.dumps(result, ensure_ascii=False))
         else:
-            logger.info("回复富文本成功: %s...", text[:50])
+            logger.info("回复文本成功: %s...", text[:50])
     except Exception as e:
-        logger.exception("回复飞书富文本异常: %s", e)
+        logger.exception("回复飞书文本异常: %s", e)
 
 
 # ========== 消息队列（WS 线程收 -> worker 按序处理）==========
@@ -221,6 +274,38 @@ _stop_worker = threading.Event()
 MESSAGE_TTL = 300      # 消息队列最大等待时间（秒），超时丢弃
 MESSAGE_TIMEOUT = 150  # 单条消息最大处理时间（秒），超时跳过
 _worker_executor = None  # ThreadPoolExecutor，在 main 中初始化
+
+# 消息去重 + WS 重播防护（持久化到磁盘，进程重启不丢失）
+_processed_msg_ids = set()
+_processed_msg_ids_lock = Lock()
+_ws_ready_time = 0.0  # WS 就绪时间，用于过滤重播旧消息
+MSG_ID_DEDUP_TTL = 600  # 10 分钟清理一次
+
+# 内容去重：WS 重播会分配新 msg_id，但内容相同
+# {(chat_id, content_hash): timestamp} 60 秒内相同内容跳过
+_recent_content = {}
+_recent_content_lock = Lock()
+CONTENT_DEDUP_TTL = 60
+
+# 持久化去重缓存文件（跨进程重启）
+MSG_DEDUP_FILE = os.path.join(os.path.join(os.path.dirname(os.path.abspath(__file__)), "config"), "msg_dedup.json")
+
+def _load_dedup_cache() -> set:
+    try:
+        if os.path.exists(MSG_DEDUP_FILE):
+            with open(MSG_DEDUP_FILE, "r", encoding="utf-8") as f:
+                return set(json.load(f))
+    except Exception as e:
+        logger.warning("读取去重缓存失败: %s", e)
+    return set()
+
+def _save_dedup_cache(ids: set):
+    try:
+        os.makedirs(os.path.dirname(MSG_DEDUP_FILE), exist_ok=True)
+        with open(MSG_DEDUP_FILE, "w", encoding="utf-8") as f:
+            json.dump(list(ids), f, ensure_ascii=False)
+    except Exception as e:
+        logger.warning("写入去重缓存失败: %s", e)
 
 # 格式引导（项目未匹配 / 妙搭无结果时提示用户）
 _FORMAT_GUIDE = (
@@ -292,7 +377,7 @@ def _resolve_project(text: str) -> tuple:
     return text, None, f"未识别到项目缩写，请在消息开头加上项目缩写，例如「A66-T 创建任务...」。\n可用缩写：{abbr_list}"
 
 
-def _process_one_message(text: str, chat_id: str, open_id: str):
+def _process_one_message(text: str, chat_id: str, open_id: str, mention_map: dict = None):
     """实际处理单条消息：项目匹配 → 调妙搭 → 创建任务 → 回复"""
     logger.info("开始处理消息 from=%s: %s", open_id, text[:80])
 
@@ -336,6 +421,7 @@ def _process_one_message(text: str, chat_id: str, open_id: str):
 
             # 多维表格回调 + 指派通知
             feishu_url = project_cfg.get("feishu_url", "") or ""
+            _task_warnings = []  # 收集位表/通知错误，追加到回复
 
             def on_created(title, hours, start_date, end_date, assignee_oid, task_id, assignee_uid=""):
                 # 多维表格写入（如有配置）
@@ -352,8 +438,10 @@ def _process_one_message(text: str, chat_id: str, open_id: str):
                         )
                         if err:
                             logger.warning("多维表格写入警告: %s", err)
+                            _task_warnings.append(f"⚠️ 多维表格写入失败: {err}")
                     except Exception as e:
                         logger.warning("多维表格写入异常: %s", e)
+                        _task_warnings.append(f"⚠️ 多维表格写入异常: {e}")
 
                 # 指派通知（优先 open_id，回退 uid）
                 if assignee_oid or assignee_uid:
@@ -369,8 +457,10 @@ def _process_one_message(text: str, chat_id: str, open_id: str):
                         )
                         if err:
                             logger.warning("指派通知异常: %s", err)
+                            _task_warnings.append(f"⚠️ 指派通知失败: {err}")
                     except Exception as e:
                         logger.warning("指派通知异常: %s", e)
+                        _task_warnings.append(f"⚠️ 指派通知异常: {e}")
 
             try:
                 from trinity_miaoda_task_handler import process_miaoda_tasks
@@ -381,15 +471,37 @@ def _process_one_message(text: str, chat_id: str, open_id: str):
                     parent_task=ptask,
                     project_name=project_name,
                     on_task_created=on_created,
+                    mention_map=mention_map,
                 )
-                full_reply = f"项目: {project_name}\n{reply}\n\n---\n{result}"
-                if "失败 0" not in result and "失败" in result:
-                    reply_feishu_post(chat_id, f"{full_reply}\n\n{_FORMAT_GUIDE}")
+                _ts = datetime.now().strftime("%H:%M")
+                full_reply = f"项目: {project_name} [{_ts}]\n{reply}\n\n---\n{result}"
+
+                # 追加位表/通知警告
+                if _task_warnings:
+                    full_reply += "\n\n" + "\n".join(_task_warnings)
+
+                # 累计任务数：从 result 中提取本次成功数
+                import re as _re2
+                success_m = _re2.search(r'成功 (\d+)', result)
+                fail_m = _re2.search(r'失败 (\d+)', result)
+                success_count = int(success_m.group(1)) if success_m else 0
+                fail_count = int(fail_m.group(1)) if fail_m else 0
+                if success_count > 0:
+                    global _task_total
+                    _task_total += success_count
+                    _save_task_counter(_task_total)
+                    _task_logger.info("累计创建任务: %s (+%s)", _task_total, success_count)
+
+                if success_count == 0 and fail_count > 0:
+                    # 全部失败：不显示妙搭的"已提取并创建"误导文字
+                    reply_feishu_post(chat_id, f"项目: {project_name} [{_ts}]\n❌ 任务创建失败:\n{result}")
                 else:
                     reply_feishu_post(chat_id, full_reply)
             except Exception as e:
                 logger.exception("任务创建异常: %s", e)
-                reply_feishu_post(chat_id, f"项目: {project_name}\n{reply}\n\n---\n任务创建异常: {e}\n\n{_FORMAT_GUIDE}")
+                # 异常时也不显示妙搭的"已创建"文字和格式引导
+                _ts = datetime.now().strftime("%H:%M")
+                reply_feishu_post(chat_id, f"项目: {project_name} [{_ts}]\n❌ 任务创建异常: {e}")
     else:
         reply_feishu_post(chat_id, f"{reply}\n\n{_FORMAT_GUIDE}")
 
@@ -402,13 +514,15 @@ def queue_worker():
     from concurrent.futures import TimeoutError
 
     while not _stop_worker.is_set():
+        mention_map = {}
         try:
-            text, chat_id, open_id, enqueue_time = _message_queue.get(timeout=1)
+            item = _message_queue.get(timeout=1)
+            if len(item) == 5:
+                text, chat_id, open_id, enqueue_time, mention_map = item
+            else:
+                text, chat_id, open_id, enqueue_time = item
         except (queue.Empty, ValueError):
-            try:
-                text, chat_id, open_id, enqueue_time = _message_queue.get(timeout=1)
-            except (queue.Empty, ValueError):
-                continue
+            continue
 
         # 超时检查：消息在队列里等太久 → 丢弃（用户很可能已经重发了）
         age = time.time() - enqueue_time
@@ -416,10 +530,10 @@ def queue_worker():
             logger.warning("消息超时丢弃: age=%.0fs text=%s…", age, text[:40])
             continue
 
-        logger.info("出队消息 age=%.0fs text=%s…", age, text[:40])
+        logger.info("出队消息 age=%.0fs text=%s… mention_map=%s", age, text[:40], mention_map)
 
         # 提交到线程池执行，带超时保护
-        fut = _worker_executor.submit(_process_one_message, text, chat_id, open_id)
+        fut = _worker_executor.submit(_process_one_message, text, chat_id, open_id, mention_map)
         try:
             fut.result(timeout=MESSAGE_TIMEOUT)
         except TimeoutError:
@@ -429,7 +543,11 @@ def queue_worker():
 
 def handle_message(data) -> None:
     """WS 线程中调用：提取消息入队列，不阻塞"""
-    global _last_msg_time
+    global _last_msg_time, _ws_ready_time
+    # WS 保护期：刚启动/重连时跳过旧消息重播
+    if time.time() < _ws_ready_time:
+        logger.info("WS 保护期(%.1fs)，跳过消息", _ws_ready_time - time.time())
+        return
     try:
         event = getattr(data, "event", None)
         if not event or not event.message:
@@ -441,6 +559,18 @@ def handle_message(data) -> None:
 
         content = event.message.content or "{}"
         logger.info("原始消息内容: %s", content[:300])
+
+        # 消息去重：message_id 相同说明是 WS 重复投递
+        msg_id = getattr(event.message, "message_id", "") or ""
+        if msg_id:
+            with _processed_msg_ids_lock:
+                if msg_id in _processed_msg_ids:
+                    logger.info("跳过重复消息: msg_id=%s text=%s", msg_id, content[:50])
+                    return
+                _processed_msg_ids.add(msg_id)
+                if len(_processed_msg_ids) % 20 == 0:
+                    _save_dedup_cache(_processed_msg_ids)
+                logger.info("消息 msg_id=%s (去重缓存大小:%d)", msg_id, len(_processed_msg_ids))
         try:
             content_json = json.loads(content)
             user_text = content_json.get("text", "")
@@ -448,18 +578,21 @@ def handle_message(data) -> None:
             user_text = content
 
         # 解析 @ 提及（独立 try/except，不影响消息入队列）
+        _mention_map = {}  # {中文名: open_id}，传给 handler 优先使用
         try:
             mentions = getattr(event.message, "mentions", None)
             if mentions:
                 for m in mentions:
-                    # Lark-oAPI MentionEvent 对象，用属性访问而非 dict
                     key = getattr(m, 'key', '')
                     name = getattr(m, 'name', '')
                     mid = getattr(m, 'id', None)
                     oid = getattr(mid, 'open_id', '') if mid else ''
                     if key and (name or oid):
-                        # 替换格式 "姓名(@open_id)"，妙搭能读姓名，handler 也能解析 @open_id
-                        replacement = f"{name}(@{oid})" if name else f"@{oid}"
+                        # 只替换为中文名（不加 open_id 后缀干扰妙搭 NLP），
+                        # open_id 走 _mention_map 传递
+                        replacement = name if name else f"@{oid}"
+                        if name and oid:
+                            _mention_map[name] = oid
                         user_text = user_text.replace(f"@{key}", replacement)
                         user_text = user_text.replace(key, replacement)
                         logger.info("提及替换: %s -> %s (oid=%s)", key, replacement, oid)
@@ -472,8 +605,8 @@ def handle_message(data) -> None:
         # 记录最后消息时间（用于 WS 超时重连判断）
         _last_msg_time = time.time()
 
-        # 入队列（带时间戳，worker 超时检查用）
-        _message_queue.put((user_text, chat_id, open_id, time.time()))
+        # 入队列（带时间戳 + mention 映射，worker 超时检查用）
+        _message_queue.put((user_text, chat_id, open_id, time.time(), _mention_map))
 
         # 在线程里：取姓名 → 打日志 → 回复"处理中"
         threading.Thread(target=_reply_busy_and_log, args=(chat_id, open_id), daemon=True).start()
@@ -482,15 +615,17 @@ def handle_message(data) -> None:
 
 
 def _reply_busy_and_log(chat_id: str, open_id: str):
-    """在线程中获取姓名 → 打日志 → 回复"处理中"（含姓名）"""
+    """立即回复"处理中"，不等待飞书联系人 API（异步获取姓名打日志）"""
     try:
+        qsize = _message_queue.qsize()
+        _ts = datetime.now().strftime("%H:%M")
+        busy_text = f"[{_ts}] 收到消息，当前队列还有 {qsize} 条消息待处理..."
+        reply_feishu(chat_id, busy_text)
+        # 异步获取姓名只用于日志，不阻塞回复
         name = get_user_name(open_id)
         logger.info("发送者身份: open_id=%s display=%s", open_id, name)
-        qsize = _message_queue.qsize()
-        busy_text = f"收到{name}的消息，当前队列还有 {qsize} 条消息待处理..."
-        reply_feishu(chat_id, busy_text)
     except Exception as e:
-        logger.exception("回复处理中异常: %s", e)
+        logger.warning("回复处理中异常: %s", e)
 
 
 # ========== WS 线程（使用官方 SDK Client）==========
@@ -538,11 +673,14 @@ def _cleanup_old_process():
             with open(PID_FILE) as f:
                 old_pid = int(f.read().strip())
             if old_pid != os.getpid():
+                import subprocess
                 try:
-                    os.kill(old_pid, signal.SIGTERM)
-                    logger.info("已结束旧进程 PID=%s", old_pid)
+                    # Windows 用 taskkill /F 确保进程真正终止
+                    subprocess.run(["taskkill", "/F", "/PID", str(old_pid)],
+                                   capture_output=True, timeout=5)
+                    logger.info("已强制终止旧进程 PID=%s", old_pid)
                     time.sleep(2)
-                except (OSError, ProcessLookupError):
+                except Exception:
                     pass
         except Exception:
             pass
@@ -550,13 +688,19 @@ def _cleanup_old_process():
 
 # ========== 主函数 ==========
 def main():
-    global _ws_thread, _worker_executor
+    global _ws_thread, _worker_executor, _last_msg_time, _ws_ready_time
 
     _cleanup_old_process()
     with open(PID_FILE, "w") as f:
         f.write(str(os.getpid()))
 
-    logger.info("飞书机器人启动中... PID=%s", os.getpid())
+    global _task_total, _processed_msg_ids
+    _task_total = _load_task_counter()
+    with _processed_msg_ids_lock:
+        _processed_msg_ids = _load_dedup_cache()
+    logger.info("飞书机器人启动中... PID=%s | 累计创建任务: %s | 加载去重缓存: %d",
+                os.getpid(), _task_total, len(_processed_msg_ids))
+    _task_logger.info("飞书机器人启动中... PID=%s | 累计创建任务: %s", os.getpid(), _task_total)
 
     from concurrent.futures import ThreadPoolExecutor
     _worker_executor = ThreadPoolExecutor(max_workers=2)
@@ -569,15 +713,32 @@ def main():
     stop = threading.Event()
     _ws_thread = threading.Thread(target=run_ws, args=(stop,), daemon=True)
     _ws_thread.start()
+    _ws_ready_time = time.time() + 8  # WS 启动 8 秒后才接受消息（过滤重播）
 
     start_time = time.time()
     _hb_count = 0
+    _last_msg_time = time.time()  # 初始化，避免刚启动就触发检测
     try:
         while not stop.is_set():
             time.sleep(1)
             _hb_count += 1
+
+            # WS 健康检测：超过 2 分钟无消息 → 杀死旧 WS 线程重建
             if _hb_count % 30 == 0:
-                logger.info("心跳: 运行中... (%.0fs) 队列:%d", time.time() - start_time, _message_queue.qsize())
+                _hb_logger.info("心跳: 运行中... (%.0fs) 队列:%d", time.time() - start_time, _message_queue.qsize())
+                if time.time() - _last_msg_time > 120 and _ws_thread and not _ws_thread.is_alive():
+                    _hb_logger.warning("WS 线程已死，重启中...")
+                    _ws_ready_time = time.time() + 8  # 重启保护期，过滤重播
+                    stop = threading.Event()
+                    _ws_thread = threading.Thread(target=run_ws, args=(stop,), daemon=True)
+                    _ws_thread.start()
+
+            # 每 10 分钟清理一次消息去重缓存
+            if _hb_count % 600 == 0:
+                with _processed_msg_ids_lock:
+                    _processed_msg_ids.clear()
+                    _save_dedup_cache(set())
+                    _hb_logger.info("消息去重缓存已清理")
     except KeyboardInterrupt:
         logger.info("收到 Ctrl+C, 正在停止...")
     except SystemExit:

@@ -51,7 +51,7 @@
     "name": "GAC A02 IPU04 单Orin",
     "abbr": "A02",
     "projectId": "PMD2022112210380404993",
-    "parentTask": "",
+    "parentTask": "TASK20241119_21860",
     "spm": "房汉柠",
     "feishu_url": ""
   },
@@ -67,7 +67,7 @@
     "name": "GAC_A02Y_IPU04_ADC_OrinX",
     "abbr": "A02Y",
     "projectId": "PMD2024022210122841195",
-    "parentTask": "",
+    "parentTask": "TASK20241119_21862",
     "spm": "房汉柠",
     "feishu_url": ""
   },
@@ -75,7 +75,7 @@
     "name": "GAC_A19_IPU04_ADC_OrinX",
     "abbr": "A19X",
     "projectId": "PMD2024022311142017745",
-    "parentTask": "",
+    "parentTask": "TASK20241119_21864",
     "spm": "房汉柠",
     "feishu_url": ""
   },
@@ -83,7 +83,7 @@
     "name": "DF NISSAN PK1B_IPU04_Orin Y",
     "abbr": "PK1B",
     "projectId": "PMD2024120210121168624",
-    "parentTask": "",
+    "parentTask": "TASK20241203_04089",
     "spm": "房汉柠",
     "feishu_url": ""
   },
@@ -99,7 +99,7 @@
     "name": "BTET BZ5 ADCU",
     "abbr": "BZ5",
     "projectId": "APP2025122309411137097",
-    "parentTask": "",
+    "parentTask": "TASK20251229_26986",
     "spm": "房汉柠",
     "feishu_url": ""
   },
@@ -139,7 +139,7 @@
     "name": "GTMC AY5-TM ADCU",
     "abbr": "AY5-TM",
     "projectId": "APP2026031715280267816",
-    "parentTask": "",
+    "parentTask": "TASK20260324_37353",
     "spm": "宋学郊",
     "feishu_url": ""
   },
@@ -181,7 +181,7 @@
     "projectId": "APP2026011710212336366",
     "parentTask": "TASK20260117_29792",
     "spm": "孙猛",
-    "feishu_url": ""
+    "feishu_url": "https://yesv-desaysv.feishu.cn/base/Ks44bgIL0aUcAfse2Macjp5qn3e?table=tblP0XBYUWPOrf6i&view=vewM4XrUii"
   },
   {
     "name": "郑州日产S20前毫米波雷达（4D边缘计算）",
@@ -189,7 +189,7 @@
     "projectId": "APP2026011710350226176",
     "parentTask": "TASK20260117_29790",
     "spm": "孙猛",
-    "feishu_url": ""
+    "feishu_url": "https://yesv-desaysv.feishu.cn/base/Ks44bgIL0aUcAfse2Macjp5qn3e?table=tblP0XBYUWPOrf6i&view=vewM4XrUii"
   },
   {
     "name": "X1T ThorU/GAC_XE6_IPU14_ThorU",

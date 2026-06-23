@@ -1,4 +1,4 @@
-# TaskCreator v3.3 — 飞书机器人 → 妙搭 → Trinity 任务创建 → 多维表格 + 指派通知
+# TaskCreator v3.4 — 飞书机器人 → 妙搭 → Trinity 任务创建 → 多维表格 + 指派通知
 
 ## 概述
 
@@ -16,15 +16,22 @@
 ┌─────────────────────────────────────────────────────────────────────────┐
 │                        feishu_ws_bot.py                                 │
 │  ┌──────────┐   ┌──────────┐   ┌──────────────────────────────────┐    │
-│  │ WS 线程   │ → │ 消息队列  │ → │ ThreadPoolExecutor(2)            │    │
-│  │ 收消息+ACK │   │ Queue    │   │ 每条消息最多 150s 超时            │    │
-│  └──────────┘   │ + 5min TTL│   │ ① 提取项目缩写 → trinity_project_matcher  │    │
-│                 └──────────┘   │ ② 调妙搭拆解任务                    │    │
-│                                │ ③ process_miaoda_tasks 创建任务     │    │
+│  │ WS 线程   │ → │ 消息去重  │ → │ ThreadPoolExecutor(2)            │    │
+│  │ 收消息+ACK │   │ msg_id   │   │ 每条消息最多 150s 超时            │    │
+│  │ @提及→姓名 │   │ +内容Hash│   │ ① 提取项目缩写 → trinity_project_matcher  │    │
+│  │ +mention_map│  │ +8s保护期│   │ ② 调妙搭拆解任务                    │    │
+│  └──────────┘   └──────────┘   │ ③ process_miaoda_tasks 创建任务     │    │
+│                                │    ├─ mention_map 传递 @open_id     │    │
+│                                │    └─ UID→open_id 飞书API回退       │    │
 │                                │ ④ on_task_created 回调              │    │
 │                                │    ├─ feishu_bitable_writer  → 多维表格    │    │
 │                                │    └─ feishu_notify_assignee → 指派通知    │    │
 │                                └──────────────────────────────────┘    │
+│  ┌──────────┐   ┌──────────┐                                          │
+│  │ 任务计数器 │   │ WS 健康   │                                          │
+│  │ 累计统计   │   │ 2min检测  │                                          │
+│  │ 持久化JSON │   │ 自动重连   │                                          │
+│  └──────────┘   └──────────┘                                          │
 └────────────────────────────────────────────────────────────────────────┘
                                            │
               ┌────────────────────────────┼───────────────┐
@@ -35,8 +42,11 @@
               │  └──────────┘  │ 飞书ID直查 │  │ + 任务链接 │ │
               │                │ ou_ / @   │  └──────────┘ │
               │                ├──────────┤                │
-              │                │ 联系人搜索 │               │
-              │                │ 中文名→oid │               │
+              │                │ mention_map│              │
+              │                │ @提及→oid │               │
+              │                ├──────────┤                │
+              │                │ UID→open_id│              │
+              │                │ 飞书API回退│              │
               │                └──────────┘                │
               │                  ┌──────────┐              │
               │                  │ 成员缓存  │              │
@@ -56,14 +66,16 @@
 
 | 文件 | 职责 |
 |------|------|
-| `feishu_ws_bot.py` | 飞书 WS 长连接、消息收发、@提及替换、项目缩写提取、任务创建调度、位表写入回调 |
-| `trinity_miaoda_task_handler.py` | 任务创建核心逻辑：人名/ID解析、飞书联系人搜索、Trinity API 调用、生成任务链接 |
+| `feishu_ws_bot.py` | 飞书 WS 长连接、消息去重（msg_id + 内容 Hash）、@提及替换、项目缩写提取、任务创建调度、位表写入回调、任务累计计数器、WS 健康检测自动重连 |
+| `trinity_miaoda_task_handler.py` | 任务创建核心逻辑：人名/ID解析、mention_map 传递 @open_id、UID→open_id 飞书 API 回退、Trinity API 调用、生成任务链接 |
 | `feishu_bitable_writer.py` | 飞书多维表格写入：将已创建的 Trinity 任务写入项目对应 Bitable |
-| `feishu_notify_assignee.py` | 指派通知：任务创建后向指派人发送飞书私信通知 |
+| `feishu_notify_assignee.py` | 指派通知：任务创建后向指派人发送飞书 Interactive Card（含时间戳） |
 | `trinity_project_matcher.py` | 项目缩写精确匹配 + 模糊搜索 + 用户引导 |
 | `config/projects_config.json` | 项目配置（缩写→项目ID→SPM→父级任务→feishu_url） |
 | `config/name_map.json` | 中文名 → 英文名映射（可选，拼音可自动匹配） |
 | `config/member_cache.json` | Trinity 项目成员缓存（自动维护） |
+| `config/msg_dedup.json` | 消息去重缓存（持久化，进程重启不丢失） |
+| `config/task_counter.json` | 累计任务数统计（持久化，进程重启不丢失） |
 | `config.py` | Trinity 认证配置、Token 管理 |
 
 ## 使用方式
@@ -145,6 +157,11 @@ A19白盒测试 指派人: 房汉柠 | 20h
   │     ├─→ user_id 直搜成员缓存（跳过拼音）
   │     └─→ 姓名走 NAME_MAP / 拼音匹配
   │
+  ├─→ mention_map 路径（@提及直传）
+  │     @提及 → 中文名 + open_id 旁路传递
+  │     ├─→ 中文名匹配成员缓存 → UID + open_id
+  │     └─→ 跳过联系人搜索（open_id 已知）
+  │
   └─→ NAME_MAP 手动匹配（.name_map.json）
   │    有 → 使用映射的英文名
   │
@@ -152,7 +169,9 @@ A19白盒测试 指派人: 房汉柠 | 20h
         "杜雪莲" → ["du xuelian", "du xue lian"]
         │
         └─→ 与 Trinity 成员缓存匹配
-              找到 → 返回 UID
+              找到 → 搜索联系人 open_id
+              │      ├─→ 中文名搜索通讯录
+              │      └─→ UID→open_id 飞书API回退
               未找到 → 刷新缓存再试
               仍未找到 → 报告错误
 ```
@@ -204,9 +223,23 @@ python feishu_ws_bot.py
 
 启动后自动连接飞书 WS 网关，心跳每 30s 打印一次。
 
-## v3.3 更新内容
+## v3.4 更新内容
 
-### v3.3（当前）
+### v3.4（当前）
+- **消息去重**：新增 `message_id` 去重（持久化 `config/msg_dedup.json`，跨进程重启）+ 内容 Hash 去重（60s TTL），彻底解决 WS 重播导致重复处理
+- **WS 保护期**：启动/重连后 8 秒内跳过所有消息，过滤飞书重播旧消息
+- **WS 健康检测**：每 30s 检查一次，超过 2 分钟无消息且 WS 线程已死 → 自动重建连接
+- **心跳日志独立**：心跳单独写 `logs/heartbeat.log`，不再混在主业务日志 `logs/bot.log`
+- **任务累计计数器**：统计历史累计创建任务数，持久化到 `config/task_counter.json`，进程重启不丢失
+- **@提及优化**：替换格式从 `姓名(@open_id)` → 纯中文名（不干扰妙搭 NLP 解析），`open_id` 通过 `mention_map` 旁路传递给 handler 优先使用
+- **UID→open_id 回退**：中文名搜索通讯录无结果时，用 Trinity UID（=飞书 user_id）直查飞书 API 获取 open_id
+- **位表/通知告警**：多维表格写入失败 + 通知发送失败的错误信息追加到飞书回复末尾，不再静默吞掉
+- **失败场景优化**：全部失败时不显示妙搭的"已提取并创建"误导文字；异常场景也不追加格式引导
+- **回复时间戳**：所有回复消息 header 加 `[HH:MM]` 时间戳；通知卡片标题也加上时间
+- **回复响应速度**："处理中"先发送再异步获取姓名，不等待飞书联系人 API
+- **旧进程清理**：Windows 下用 `taskkill /F` 替代 `os.kill` 确保旧进程真正终止
+
+### v3.3
 - **配置热重载**：`projects_config.json` 和 `.name_map.json` 更新后自动加载，无需重启进程
 - **消息格式引导**：项目未匹配 / 妙搭无法解析 / 任务创建失败时，自动回复格式示例引导用户
 - **富文本加粗支持**：改用 `msg_type: "post"` 发送，`**加粗**` 标记真正生效
@@ -256,5 +289,4 @@ python feishu_ws_bot.py
 ## 待完善
 
 - [ ] 项目 ID / 上级任务 / 创建人 从飞书消息动态解析
-- [ ] 配置文件化（当前部分内联在代码中）
 - [ ] WebSocket 稳定性改进

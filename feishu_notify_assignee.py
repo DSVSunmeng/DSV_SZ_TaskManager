@@ -8,6 +8,7 @@
 import json
 import logging
 import time
+from datetime import datetime
 
 import requests
 
@@ -87,7 +88,7 @@ def _build_card(title: str, hours: float, start_date: str,
     return {
         "config": {"wide_screen_mode": True},
         "header": {
-            "title": {"tag": "plain_text", "content": "新任务已创建"},
+            "title": {"tag": "plain_text", "content": f"新任务已创建 [{datetime.now().strftime('%H:%M')}]"},
             "template": "blue",
         },
         "elements": elements,
@@ -157,7 +158,7 @@ def notify_assignee(open_id: str, title: str, estimated_hours: float,
         )
         data = resp.json()
         if data.get("code") == 0:
-            logger.info("指派通知发送成功: to=%s title=%s", open_id[:20], title)
+            logger.info("指派通知发送成功: to=%s title=%s", (open_id or assignee_uid)[:20], title)
             return ""
         else:
             msg = f"指派通知发送失败: code={data.get('code')} msg={data.get('msg', '')}"
