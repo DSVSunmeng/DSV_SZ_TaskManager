@@ -276,10 +276,11 @@ MESSAGE_TIMEOUT = 150  # 单条消息最大处理时间（秒），超时跳过
 _worker_executor = None  # ThreadPoolExecutor，在 main 中初始化
 
 # 消息去重 + WS 重播防护（持久化到磁盘，进程重启不丢失）
-_processed_msg_ids = set()
+# {msg_id: timestamp} — 按 TTL 淘汰，不再全量清空（避免清空后 WS 重连重播旧消息）
+_processed_msg_ids: dict = {}
 _processed_msg_ids_lock = Lock()
 _ws_ready_time = 0.0  # WS 就绪时间，用于过滤重播旧消息
-MSG_ID_DEDUP_TTL = 600  # 10 分钟清理一次
+MSG_ID_DEDUP_TTL = 3600  # 去重保留 1 小时（远超 WS 重播窗口期）
 
 # 内容去重：WS 重播会分配新 msg_id，但内容相同
 # {(chat_id, content_hash): timestamp} 60 秒内相同内容跳过
@@ -290,22 +291,36 @@ CONTENT_DEDUP_TTL = 60
 # 持久化去重缓存文件（跨进程重启）
 MSG_DEDUP_FILE = os.path.join(os.path.join(os.path.dirname(os.path.abspath(__file__)), "config"), "msg_dedup.json")
 
-def _load_dedup_cache() -> set:
+def _load_dedup_cache() -> dict:
     try:
         if os.path.exists(MSG_DEDUP_FILE):
             with open(MSG_DEDUP_FILE, "r", encoding="utf-8") as f:
-                return set(json.load(f))
+                data = json.load(f)
+                if isinstance(data, list):
+                    # 兼容旧格式（v3.4 初始版：纯 list）
+                    return {mid: time.time() for mid in data}
+                return data
     except Exception as e:
         logger.warning("读取去重缓存失败: %s", e)
-    return set()
+    return {}
 
-def _save_dedup_cache(ids: set):
+def _save_dedup_cache(cache: dict):
     try:
         os.makedirs(os.path.dirname(MSG_DEDUP_FILE), exist_ok=True)
         with open(MSG_DEDUP_FILE, "w", encoding="utf-8") as f:
-            json.dump(list(ids), f, ensure_ascii=False)
+            json.dump(cache, f, ensure_ascii=False)
     except Exception as e:
         logger.warning("写入去重缓存失败: %s", e)
+
+def _evict_dedup_cache():
+    """淘汰过期的去重条目（按 MSG_ID_DEDUP_TTL）"""
+    with _processed_msg_ids_lock:
+        now = time.time()
+        stale = [mid for mid, ts in _processed_msg_ids.items() if now - ts > MSG_ID_DEDUP_TTL]
+        for mid in stale:
+            del _processed_msg_ids[mid]
+        if stale:
+            _save_dedup_cache(_processed_msg_ids)
 
 # 格式引导（项目未匹配 / 妙搭无结果时提示用户）
 _FORMAT_GUIDE = (
@@ -560,14 +575,33 @@ def handle_message(data) -> None:
         content = event.message.content or "{}"
         logger.info("原始消息内容: %s", content[:300])
 
-        # 消息去重：message_id 相同说明是 WS 重复投递
+        # ---- 内容去重（第一道防线）----
+        # WS 重播偶尔分配新 msg_id，但相同内容 60s 内不应重复处理
+        content_hash = hashlib.sha256(content.encode()).hexdigest()
+        content_key = f"{chat_id}:{content_hash}"
+        with _recent_content_lock:
+            now = time.time()
+            if content_key in _recent_content:
+                if now - _recent_content[content_key] < CONTENT_DEDUP_TTL:
+                    logger.info("跳过重复内容: chat=%s hash=%s age=%.1fs",
+                                chat_id, content_hash[:8], now - _recent_content[content_key])
+                    return
+            _recent_content[content_key] = now
+            # 清理过期内容条目
+            stale_keys = [k for k, v in _recent_content.items() if now - v > CONTENT_DEDUP_TTL]
+            for k in stale_keys:
+                del _recent_content[k]
+
+        # ---- 消息去重（第二道防线）----
+        # message_id 相同说明是 WS 重复投递
         msg_id = getattr(event.message, "message_id", "") or ""
         if msg_id:
             with _processed_msg_ids_lock:
                 if msg_id in _processed_msg_ids:
-                    logger.info("跳过重复消息: msg_id=%s text=%s", msg_id, content[:50])
+                    age = now - _processed_msg_ids[msg_id]
+                    logger.info("跳过重复消息: msg_id=%s age=%.0fs", msg_id, age)
                     return
-                _processed_msg_ids.add(msg_id)
+                _processed_msg_ids[msg_id] = now
                 if len(_processed_msg_ids) % 20 == 0:
                     _save_dedup_cache(_processed_msg_ids)
                 logger.info("消息 msg_id=%s (去重缓存大小:%d)", msg_id, len(_processed_msg_ids))
@@ -713,7 +747,7 @@ def main():
     stop = threading.Event()
     _ws_thread = threading.Thread(target=run_ws, args=(stop,), daemon=True)
     _ws_thread.start()
-    _ws_ready_time = time.time() + 8  # WS 启动 8 秒后才接受消息（过滤重播）
+    _ws_ready_time = time.time() + 30  # WS 启动/重连 30 秒后才接受消息（过滤飞书历史重播）
 
     start_time = time.time()
     _hb_count = 0
@@ -728,17 +762,15 @@ def main():
                 _hb_logger.info("心跳: 运行中... (%.0fs) 队列:%d", time.time() - start_time, _message_queue.qsize())
                 if time.time() - _last_msg_time > 120 and _ws_thread and not _ws_thread.is_alive():
                     _hb_logger.warning("WS 线程已死，重启中...")
-                    _ws_ready_time = time.time() + 8  # 重启保护期，过滤重播
+                    _ws_ready_time = time.time() + 30  # 重启保护期，过滤重播
                     stop = threading.Event()
                     _ws_thread = threading.Thread(target=run_ws, args=(stop,), daemon=True)
                     _ws_thread.start()
 
-            # 每 10 分钟清理一次消息去重缓存
+            # 每 10 分钟淘汰一次过期的去重条目（保留最近 1 小时的 msg_id）
             if _hb_count % 600 == 0:
-                with _processed_msg_ids_lock:
-                    _processed_msg_ids.clear()
-                    _save_dedup_cache(set())
-                    _hb_logger.info("消息去重缓存已清理")
+                _evict_dedup_cache()
+                _hb_logger.info("去重缓存已清理 (保留: %d)", len(_processed_msg_ids))
     except KeyboardInterrupt:
         logger.info("收到 Ctrl+C, 正在停止...")
     except SystemExit:
