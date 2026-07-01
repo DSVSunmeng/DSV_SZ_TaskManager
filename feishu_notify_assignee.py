@@ -27,7 +27,7 @@ def _get_feishu_token() -> str:
         resp = requests.post(
             "https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal",
             json={"app_id": FEISHU_APP_ID, "app_secret": FEISHU_APP_SECRET},
-            timeout=15,
+            timeout=15, verify=False,
         )
         data = resp.json()
         _token_cache["token"] = data["tenant_access_token"]
@@ -88,7 +88,7 @@ def _build_card(title: str, hours: float, start_date: str,
     return {
         "config": {"wide_screen_mode": True},
         "header": {
-            "title": {"tag": "plain_text", "content": f"新任务已创建 [{datetime.now().strftime('%H:%M')}]"},
+            "title": {"tag": "plain_text", "content": f"新任务已创建：{title}"},
             "template": "blue",
         },
         "elements": elements,
@@ -154,7 +154,7 @@ def notify_assignee(open_id: str, title: str, estimated_hours: float,
                 "msg_type": "interactive",
                 "content": json.dumps(card, ensure_ascii=False),
             },
-            timeout=15,
+            timeout=15, verify=False,
         )
         data = resp.json()
         if data.get("code") == 0:

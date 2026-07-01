@@ -94,7 +94,7 @@ def _build_member_cache(project_id: str) -> bool:
 
         resp = requests.post(url, json=data, headers=headers,
                              auth=HTTPBasicAuth(request_info.pi_user, request_info.pi_pw),
-                             timeout=60)
+                             timeout=180)
         j = resp.json()
         if j.get("code") != 200:
             logger.error("获取项目成员失败: %s", j.get("msg"))
@@ -316,12 +316,28 @@ def _chinese_to_pinyin_candidates(chinese_name: str) -> list:
     return list(set(candidates))
 
 
-def _resolve_by_name(chinese_name: str, project_id: str) -> tuple:
+def _resolve_by_name(chinese_name: str, project_id: str, mention_map: dict = None) -> tuple:
     """
     通过中文名查找 Trinity UID。
-    流程：NAME_MAP → 拼音 → member_cache
-    返回 (uid, english_name, None)，第三个值为飞书 open_id（仅 @/ou_ 路径才有）
+    流程：mention_map(open_id优先) → NAME_MAP → 拼音 → member_cache
+    返回 (uid, english_name, feishu_open_id)
     """
+    # 0. mention_map 已有 open_id → 直接通过飞书 API 查 Trinity UID，跳过拼音
+    if mention_map and chinese_name in mention_map:
+        oid = mention_map[chinese_name]
+        logger.info("mention_map 命中: name=%s oid=%s", chinese_name, oid)
+        _, feishu_uid = _resolve_feishu_id(oid)
+        if feishu_uid:
+            _ensure_member_cache(project_id)
+            for eng_key, entry in _member_cache.items():
+                if entry.get("uid") == feishu_uid:
+                    display_name = eng_key.split()
+                    eng_name = display_name[0].capitalize() if len(display_name) == 1 else \
+                        display_name[0].capitalize() + " " + "".join(p.capitalize() for p in display_name[1:])
+                    logger.info("mention_map open_id→UID: %s -> %s (%s)", chinese_name, eng_name, feishu_uid)
+                    return feishu_uid, eng_name, oid
+        logger.warning("mention_map open_id 无法获取 Trinity UID: oid=%s", oid)
+
     # 1. NAME_MAP 手动覆盖
     english_name = _name_map.get(chinese_name)
     if english_name:
@@ -423,7 +439,7 @@ def resolve_name_to_uid(name_or_id: str, project_id: str, mention_map: dict = No
 
         # 2) 用姓名走 NAME_MAP → 拼音 → member_cache
         if feishu_name:
-            uid, eng, _ = _resolve_by_name(feishu_name, project_id)
+            uid, eng, _ = _resolve_by_name(feishu_name, project_id, mention_map)
             if uid:
                 return uid, eng, feishu_open_id
 
@@ -431,7 +447,7 @@ def resolve_name_to_uid(name_or_id: str, project_id: str, mention_map: dict = No
         return None, None, None
 
     # ---- 中文名路径 ----
-    uid, eng, _ = _resolve_by_name(raw, project_id)
+    uid, eng, _ = _resolve_by_name(raw, project_id, mention_map)
     if uid:
         # 优先使用 mention_map 中的 open_id（来自用户 @提及，无需再搜索）
         if mention_map and raw in mention_map:
@@ -488,7 +504,7 @@ def create_trinity_task(params: dict) -> dict:
     try:
         resp = requests.post(url, json=data, headers=headers,
                              auth=HTTPBasicAuth(request_info.pi_user, request_info.pi_pw),
-                             timeout=60)
+                             timeout=180)
     except requests.RequestException as e:
         logger.exception("创建任务请求异常: %s", e)
         return {"error": str(e)}
@@ -515,7 +531,8 @@ def create_trinity_task(params: dict) -> dict:
 
 def process_miaoda_tasks(tasks: list, project_id: str, creator_name: str,
                          parent_task: str = "", project_name: str = "",
-                         on_task_created=None, mention_map: dict = None) -> str:
+                         on_task_created=None, mention_map: dict = None,
+                         project_abbr: str = "") -> str:
     """
     处理妙搭返回的任务列表，逐个创建 Trinity 任务。
     返回格式化的结果文本用于飞书回复。
@@ -554,6 +571,20 @@ def process_miaoda_tasks(tasks: list, project_id: str, creator_name: str,
             lines.append(f"{i}. 缺少任务名或指派人")
             fail_count += 1
             continue
+
+        # ---- 兜底：标题未包含项目缩写时自动补上 ----
+        if project_abbr and title:
+            has_prefix = title.startswith(project_abbr)
+            # 已以 project_abbr 开头且后接非字母数字字符（空格/中文/标点）或正好等于 → 跳过
+            if has_prefix:
+                rest = title[len(project_abbr):]
+                if not rest or not rest[0].isascii() or not rest[0].isalnum():
+                    pass  # 已有前缀，不需要补
+                else:
+                    title = f"{project_abbr} {title}"
+            else:
+                title = f"{project_abbr} {title}"
+                logger.info("标题自动补全项目前缀: %s -> %s", task.get("taskDescription"), title)
 
         assignee_uid, assignee_en, assignee_oid = resolve_name_to_uid(assignee_cn, project_id, mention_map)
         if not assignee_uid:

@@ -25,6 +25,8 @@ from datetime import datetime
 import requests
 import urllib3
 urllib3.disable_warnings()
+import ssl
+ssl._create_default_https_context = ssl._create_unverified_context
 from requests.adapters import HTTPAdapter
 
 LOG_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "logs")
@@ -173,38 +175,55 @@ def get_user_name(open_id: str) -> str:
     return name
 
 
+_miaoda_call_count = 0
+_miaoda_call_lock = Lock()
+
 def call_miaoda(message: str, sender_id: str) -> tuple:
     """返回 (reply_text, tasks_list)"""
+    global _miaoda_call_count
+    with _miaoda_call_lock:
+        _miaoda_call_count += 1
+        call_id = _miaoda_call_count
     import re
     original = message
     # 归一化空格，避免多余空格干扰妙搭 NLP 解析
     message = re.sub(r'\s+', ' ', message).strip()
     # 去掉残留的 @ 符号（@中文 会干扰妙搭 NLP 解析）
     message = re.sub(r'@(\S+)', r'\1', message)
-    logger.info("调用妙搭: message=%s sender=%s", message[:200], sender_id[:20])
+    logger.info("[miaoda_call=%d] 调用妙搭: message=%s sender=%s", call_id, message[:200], sender_id[:20])
     try:
         resp = _insecure_session.post(
             f"{MIAODA_BASE}/openapi/chat",
             json={"message": message, "senderId": sender_id},
             headers={"Authorization": f"Bearer {MIAODA_API_KEY}"},
-            timeout=60,
+            timeout=180,
         )
         try:
             data = resp.json()
         except Exception:
             logger.error("妙搭返回非 JSON: status=%s body=%s", resp.status_code, resp.text[:200])
             return f"（妙搭接口异常: HTTP {resp.status_code}）", []
-        logger.info("妙搭响应: %s", json.dumps(data, ensure_ascii=False)[:500])
+        logger.info("[miaoda_call=%d] 妙搭响应: %s", call_id, json.dumps(data, ensure_ascii=False)[:500])
         reply = data.get("reply", "（无回复）")
         tasks = data.get("tasks", [])
         return reply, tasks
     except Exception as e:
-        logger.exception("调用妙搭异常: %s", e)
+        logger.exception("[miaoda_call=%d] 调用妙搭异常: %s", call_id, e)
         return "（妙搭服务调用超时，请稍后再试）", []
 
 
+_reply_seq = 0
+_reply_seq_lock = Lock()
+
+def _next_seq() -> int:
+    global _reply_seq
+    with _reply_seq_lock:
+        _reply_seq += 1
+        return _reply_seq
+
 def reply_feishu(chat_id: str, text: str):
     try:
+        seq = _next_seq()
         token = get_token()
         resp = _insecure_session.post(
             "https://open.feishu.cn/open-apis/im/v1/messages?receive_id_type=chat_id",
@@ -218,9 +237,9 @@ def reply_feishu(chat_id: str, text: str):
         )
         result = resp.json()
         if result.get("code") != 0:
-            logger.error("回复消息失败: %s", json.dumps(result, ensure_ascii=False))
+            logger.error("[seq=%d] 回复消息失败: %s", seq, json.dumps(result, ensure_ascii=False))
         else:
-            logger.info("回复成功: %s...", text[:50])
+            logger.info("[seq=%d] 回复成功: %s...", seq, text[:50])
     except Exception as e:
         logger.exception("回复飞书消息异常: %s", e)
 
@@ -247,6 +266,7 @@ def _text_to_post_content(text: str) -> list:
 def reply_feishu_post(chat_id: str, text: str):
     """以富文本消息（msg_type: post）发送，支持 **bold** 标记"""
     try:
+        seq = _next_seq()
         token = get_token()
         content = _text_to_post_content(text)
         resp = _insecure_session.post(
@@ -261,9 +281,9 @@ def reply_feishu_post(chat_id: str, text: str):
         )
         result = resp.json()
         if result.get("code") != 0:
-            logger.error("回复文本失败: %s", json.dumps(result, ensure_ascii=False))
+            logger.error("[seq=%d] 回复文本失败: %s", seq, json.dumps(result, ensure_ascii=False))
         else:
-            logger.info("回复文本成功: %s...", text[:50])
+            logger.info("[seq=%d] 回复文本成功: %s...", seq, text[:50])
     except Exception as e:
         logger.exception("回复飞书文本异常: %s", e)
 
@@ -280,13 +300,13 @@ _worker_executor = None  # ThreadPoolExecutor，在 main 中初始化
 _processed_msg_ids: dict = {}
 _processed_msg_ids_lock = Lock()
 _ws_ready_time = 0.0  # WS 就绪时间，用于过滤重播旧消息
-MSG_ID_DEDUP_TTL = 3600  # 去重保留 1 小时（远超 WS 重播窗口期）
+MSG_ID_DEDUP_TTL = 7200  # 去重保留 2 小时（飞书重播延迟实测达 5+ 分钟）
 
 # 内容去重：WS 重播会分配新 msg_id，但内容相同
-# {(chat_id, content_hash): timestamp} 60 秒内相同内容跳过
+# {(chat_id, content_hash): timestamp} 600 秒内相同内容跳过
 _recent_content = {}
 _recent_content_lock = Lock()
-CONTENT_DEDUP_TTL = 60
+CONTENT_DEDUP_TTL = 600  # 10 分钟窗口，覆盖飞书重播最大延迟
 
 # 持久化去重缓存文件（跨进程重启）
 MSG_DEDUP_FILE = os.path.join(os.path.join(os.path.dirname(os.path.abspath(__file__)), "config"), "msg_dedup.json")
@@ -392,9 +412,19 @@ def _resolve_project(text: str) -> tuple:
     return text, None, f"未识别到项目缩写，请在消息开头加上项目缩写，例如「A66-T 创建任务...」。\n可用缩写：{abbr_list}"
 
 
+_process_msg_seq = 0
+_process_msg_seq_lock = Lock()
+
+def _next_process_seq() -> int:
+    global _process_msg_seq
+    with _process_msg_seq_lock:
+        _process_msg_seq += 1
+        return _process_msg_seq
+
 def _process_one_message(text: str, chat_id: str, open_id: str, mention_map: dict = None):
     """实际处理单条消息：项目匹配 → 调妙搭 → 创建任务 → 回复"""
-    logger.info("开始处理消息 from=%s: %s", open_id, text[:80])
+    pid = _next_process_seq()
+    logger.info("[proc=%d] 开始处理消息 from=%s: %s", pid, open_id, text[:80])
 
     # 解析项目缩写
     miaoda_text, project_cfg, hint = _resolve_project(text)
@@ -487,6 +517,7 @@ def _process_one_message(text: str, chat_id: str, open_id: str, mention_map: dic
                     project_name=project_name,
                     on_task_created=on_created,
                     mention_map=mention_map,
+                    project_abbr=project_cfg.get("abbr", ""),
                 )
                 _ts = datetime.now().strftime("%H:%M")
                 full_reply = f"项目: {project_name} [{_ts}]\n{reply}\n\n---\n{result}"
@@ -558,10 +589,25 @@ def queue_worker():
 
 def handle_message(data) -> None:
     """WS 线程中调用：提取消息入队列，不阻塞"""
+    logger.info("WS事件: handle_message")
     global _last_msg_time, _ws_ready_time
     # WS 保护期：刚启动/重连时跳过旧消息重播
+    #   但 msg_id 必须静默写入去重缓存——否则保护期结束后同样消息再次重播
+    #   时缓存里没有对应记录，消息会被重复处理。
     if time.time() < _ws_ready_time:
-        logger.info("WS 保护期(%.1fs)，跳过消息", _ws_ready_time - time.time())
+        try:
+            event = getattr(data, "event", None)
+            if event and event.message:
+                msg_id = getattr(event.message, "message_id", "") or ""
+                if msg_id:
+                    with _processed_msg_ids_lock:
+                        _processed_msg_ids[msg_id] = time.time()
+                    if len(_processed_msg_ids) % 50 == 0:
+                        _save_dedup_cache(_processed_msg_ids)
+        except Exception:
+            pass  # 保护期静默处理，不抛异常
+        logger.info("WS 保护期(%.1fs)，消息已静默去重 (缓存:%d)",
+                     _ws_ready_time - time.time(), len(_processed_msg_ids))
         return
     try:
         event = getattr(data, "event", None)
@@ -676,12 +722,12 @@ def run_ws(stop: threading.Event):
 
     handler = (EventDispatcherHandler.builder("", "")
                .register_p2_im_message_receive_v1(handle_message)
-               .register_p2_im_chat_access_event_bot_p2p_chat_entered_v1(lambda d: None)
-               .register_p2_im_chat_member_bot_added_v1(lambda d: None)
-               .register_p2_im_chat_member_bot_deleted_v1(lambda d: None)
-               .register_p2_im_message_message_read_v1(lambda d: None)
-               .register_p2_im_message_reaction_created_v1(lambda d: None)
-               .register_p2_im_message_reaction_deleted_v1(lambda d: None)
+               .register_p2_im_chat_access_event_bot_p2p_chat_entered_v1(lambda d: logger.info("WS事件: bot进入私聊"))
+               .register_p2_im_chat_member_bot_added_v1(lambda d: logger.info("WS事件: bot被加群"))
+               .register_p2_im_chat_member_bot_deleted_v1(lambda d: logger.info("WS事件: bot被移出群"))
+               .register_p2_im_message_message_read_v1(lambda d: logger.info("WS事件: 消息已读"))
+               .register_p2_im_message_reaction_created_v1(lambda d: logger.info("WS事件: reaction"))
+               .register_p2_im_message_reaction_deleted_v1(lambda d: logger.info("WS事件: reaction删除"))
                .build())
 
     client = Client(APP_ID, APP_SECRET, event_handler=handler)
@@ -747,7 +793,7 @@ def main():
     stop = threading.Event()
     _ws_thread = threading.Thread(target=run_ws, args=(stop,), daemon=True)
     _ws_thread.start()
-    _ws_ready_time = time.time() + 30  # WS 启动/重连 30 秒后才接受消息（过滤飞书历史重播）
+    _ws_ready_time = time.time() + 30  # WS 启动 30s 后接受消息（保护期内 msg_id 仍会缓存）  # WS 启动 120s 后接受消息（覆盖飞书重播窗口）
 
     start_time = time.time()
     _hb_count = 0
@@ -762,7 +808,7 @@ def main():
                 _hb_logger.info("心跳: 运行中... (%.0fs) 队列:%d", time.time() - start_time, _message_queue.qsize())
                 if time.time() - _last_msg_time > 120 and _ws_thread and not _ws_thread.is_alive():
                     _hb_logger.warning("WS 线程已死，重启中...")
-                    _ws_ready_time = time.time() + 30  # 重启保护期，过滤重播
+                    _ws_ready_time = time.time() + 30  # WS 启动 30s 后接受消息（保护期内 msg_id 仍会缓存）  # 重启保护期，过滤重播
                     stop = threading.Event()
                     _ws_thread = threading.Thread(target=run_ws, args=(stop,), daemon=True)
                     _ws_thread.start()

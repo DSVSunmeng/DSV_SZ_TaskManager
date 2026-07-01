@@ -1,4 +1,4 @@
-# TaskCreator v3.4 — 架构与详细设计文档
+# TaskCreator v3.5 — 架构与详细设计文档
 
 ## 1. 系统概述
 
@@ -239,9 +239,11 @@ mention_map: {"张三": "ou_xxx"}    ← open_id 旁路传递给 handler
   │
   ├── mention_map 路径（@提及直传）
   │     │
-  │     ├── 中文名在 mention_map 中 → 已有 open_id
-  │     │    匹配成员缓存 → 返回 (uid, eng, open_id)
-  │     └── 跳过联系人搜索
+  │     ├── _resolve_by_name 优先: 中文名在 mention_map 中 → 已有 open_id
+  │     │    _resolve_feishu_id(open_id) → 直接拿 user_id (=Trinity UID)
+  │     │    跳过拼音匹配（解决多音字问题）
+  │     │
+  │     └── 匹配 member_cache → 返回 (uid, eng, open_id)
   │
   └── 中文名路径
         │
@@ -411,7 +413,7 @@ Content-Type: application/json
 
 ```
 ┌──────────────────────────────────────┐
-│  🔵 新任务已创建 (蓝色标题栏)          │
+│  🔵 新任务已创建：任务名 (蓝色标题栏)  │
 ├──────────────────────────────────────┤
 │  任务：矩阵更新                        │
 │  项目：Honda 3DAA                     │
